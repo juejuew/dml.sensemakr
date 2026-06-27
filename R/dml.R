@@ -1,7 +1,7 @@
 ##' Debiased Machine Learning
 ##'
 ##' Estimates a target parameter of interest, such as an average treatment effect (ATE), using Debiased Machine #Learning (DML).
-##'
+##' test
 ##' @param y \code{\link{numeric}} vector with the outcome.
 ##' @param d \code{\link{numeric}} vector with the treatment. If the treatment is binary, it needs to be encoded as as: zero = absence of treatment, one = presence of treatment.
 ##' @param x \code{\link{numeric}} vector or \code{\link{matrix}} with covariates. We suggest constructing \code{x} using \code{\link{model.matrix}}.
