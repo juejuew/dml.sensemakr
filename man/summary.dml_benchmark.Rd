@@ -3,23 +3,26 @@
 \name{print.dml_benchmark}
 \alias{print.dml_benchmark}
 \alias{summary.dml_benchmark}
+\alias{print.summary_dml_benchmark}
 \title{Print and summary methods for DML benchmarks}
 \usage{
 \method{print}{dml_benchmark}(
   x,
   digits = max(3L, getOption("digits") - 3L),
-  combine.method = "mean",
+  combine.method = "median",
   ...
 )
 
-\method{summary}{dml_benchmark}(object, combine.method = "mean", na.rm = TRUE, ...)
+\method{summary}{dml_benchmark}(object, combine.method = "median", na.rm = TRUE, ...)
+
+\method{print}{summary_dml_benchmark}(x, digits = max(3L, getOption("digits") - 3L), ...)
 }
 \arguments{
-\item{x}{an object of class \code{\link{dml_benchmark}}.}
+\item{x}{an object of class \code{\link{dml_benchmark}} or \code{summary_dml_benchmark}.}
 
 \item{digits}{minimal number of significant digits.}
 
-\item{combine.method}{method to combine results. Default is \code{"mean"}.}
+\item{combine.method}{method to combine results. Default is \code{"median"}, matching \code{summary.dml}/\code{summary.dml.bounds} elsewhere in this package.}
 
 \item{...}{arguments passed to other methods.}
 
@@ -28,7 +31,7 @@
 \item{na.rm}{logical. Should NA values be removed? Default is \code{TRUE}.}
 }
 \value{
-For \code{print}: the object, printed to console. For \code{summary}: the object with aggregated benchmarks.
+For \code{print}: the object, printed to console. For \code{summary}: an object of class \code{summary_dml_benchmark} with the aggregated benchmarks.
 }
 \description{
 Print and summary methods for benchmark results.

@@ -28,7 +28,7 @@ covariate_balance_table(x, ...)
 
 \item{caption}{table caption. Default (\code{NULL}) generates a caption analogous to Table 2 of Chernozhukov et al (2026).}
 
-\item{label}{LaTeX label used for cross-referencing the table. Ignored when \code{format = "html"}. Default is \code{NULL} (no label).}
+\item{label}{a reference identifier for the table: for \code{format = "latex"}, this becomes a \code{\\label{}} for cross-referencing with \code{\\ref{}}; for \code{format = "html"}, this becomes an \code{id="..."} attribute on the \code{<table>}, so other content can link to it (e.g. \code{<a href="#label">}). Default is \code{NULL} (no label/id).}
 
 \item{group_breaks}{either an integer vector with the (1-indexed) covariate rows after which a rule should be drawn, or a list of character vectors giving the covariate names in each group (which must together account for every covariate in \code{x}, in table order). Used to visually separate groups of covariates (e.g., region dummies vs. economic variables). Default (\code{NULL}) draws no such rules.}
 }
@@ -36,5 +36,5 @@ covariate_balance_table(x, ...)
 A character vector with the table source, printed to the console (or knitted document) and returned invisibly.
 }
 \description{
-Formats an object of class \code{\link{dml_balance}} as a LaTeX or HTML table, replicating the layout of Table 2 in Chernozhukov, Cinelli, Newey, Sharma and Syrgkanis (2026). Intended to be used in an R Markdown/knitr chunk with \code{results = "asis"}. For \code{format = "latex"}, the document's LaTeX preamble must include \code{\\usepackage{booktabs}} (for the table rules) and \code{\\usepackage{siunitx}} (for decimal-point alignment of the Std. Mean Diff./Var. Ratio Dev. columns). For \code{format = "html"}, the mu/sigma symbols and formulas are written in \code{$...$} math notation and rely on MathJax (loaded by default in R Markdown's \code{html_document}) to render correctly.
+Formats an object of class \code{\link{dml_balance}} as a LaTeX or HTML table, replicating the layout of Table 2 in Chernozhukov, Cinelli, Newey, Sharma and Syrgkanis (2026). Intended to be used in an R Markdown/knitr chunk with \code{results = "asis"}. For \code{format = "latex"}, the document's LaTeX preamble must include \code{\\usepackage{booktabs}} (for the table rules) and \code{\\usepackage{siunitx}} (for decimal-point alignment of the Std. Mean Diff./Var. Ratio Dev. columns). For \code{format = "html"}, the output is plain, self-contained HTML/CSS with no MathJax or other JavaScript dependency, so it renders correctly even when the file is opened offline or directly from disk.
 }

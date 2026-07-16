@@ -3,14 +3,9 @@
 ##' Compute benchmarks for the strength of latent variables, under the assumption that the gains in explanatory power due to latent variables is proportional to the gains of observed covariates.
 ##' @param model an object of class \code{\link{dml}}.
 ##' @param benchmark_covariates a character vector with the names of the observed covariates that will be used for benchmarking.
-##' @param target character. The target parameter. Default is \code{"ate"}.
 ##' @returns An object of class \code{dml_benchmark} containing benchmark results.
 ##' @export
-dml_benchmark <- function(model, benchmark_covariates, target = "ate"){
-  model.type <- model$info$model
-  # bench_fun <- switch(model.type,
-  #                     npm = bench_npm,
-  #                     plm = bench_plm)
+dml_benchmark <- function(model, benchmark_covariates){
   bench <- bench_fun(model = model, benchmark_covariates = benchmark_covariates)
   class(bench) <- "dml_benchmark"
   return(bench)
@@ -18,26 +13,37 @@ dml_benchmark <- function(model, benchmark_covariates, target = "ate"){
 
 ##' Print and summary methods for DML benchmarks
 ##' @description Print and summary methods for benchmark results.
-##' @param x an object of class \code{\link{dml_benchmark}}.
+##' @param x an object of class \code{\link{dml_benchmark}} or \code{summary_dml_benchmark}.
 ##' @param digits minimal number of significant digits.
 ##' @rdname summary.dml_benchmark
 ##' @export
 print.dml_benchmark <- function(x, digits = max(3L, getOption("digits") - 3L),
-                                 combine.method = "mean", ...){
-  print(summary(x), digits = digits, ...)
+                                 combine.method = "median", ...){
+  print(summary(x, combine.method = combine.method), digits = digits, ...)
 }
 
 ##' @param object an object of class \code{\link{dml_benchmark}}.
-##' @param combine.method method to combine results. Default is \code{"mean"}.
+##' @param combine.method method to combine results. Default is \code{"median"}, matching \code{summary.dml}/\code{summary.dml.bounds} elsewhere in this package.
 ##' @param na.rm logical. Should NA values be removed? Default is \code{TRUE}.
 ##' @param ... arguments passed to other methods.
-##' @returns For \code{print}: the object, printed to console. For \code{summary}: the object with aggregated benchmarks.
+##' @returns For \code{print}: the object, printed to console. For \code{summary}: an object of class \code{summary_dml_benchmark} with the aggregated benchmarks.
 ##' @rdname summary.dml_benchmark
 ##' @export
-summary.dml_benchmark <- function(object, combine.method = "mean", na.rm = TRUE, ...){
+summary.dml_benchmark <- function(object, combine.method = "median", na.rm = TRUE, ...){
   comb_fun <- get(combine.method)
   out <- object
   out$benchmarks <- t(sapply(object$benchmarks, function(x) apply(x,2, comb_fun, na.rm = na.rm)))
+  out$combine.method <- combine.method
+  class(out) <- "summary_dml_benchmark"
+  out
+}
+
+##' @rdname summary.dml_benchmark
+##' @export
+print.summary_dml_benchmark <- function(x, digits = max(3L, getOption("digits") - 3L), ...){
+  cat("\nDebiased Machine Learning: Covariate Benchmarks\n\n")
+  print(round(x$benchmarks, digits), ...)
+  cat("\nNote: benchmarks combined using the", x$combine.method, "method.\n")
 }
 
 # bench_plm <- function(model, benchmark_covariates) {
@@ -102,6 +108,32 @@ summary.dml_benchmark <- function(object, combine.method = "mean", na.rm = TRUE,
 #   return(benchmarks)
 # }
 
+# gain in outcome-model fit attributable to the benchmark covariate: the
+# relative increase in outcome residual variance (sigma2.s) from dropping
+# it, floored at 0 (V.g = sigma.sq.wo - sigma.sq)
+benchmark_gain_y <- function(sigma.sq, V.g) {
+  pmax(0, V.g / sigma.sq)
+}
+
+# gain in treatment/Riesz-representer precision attributable to the
+# benchmark covariate: the relative increase in nu2.s from including it,
+# floored at 0 (V.a = nu.sq - nu.sq.wo)
+benchmark_gain_d <- function(nu.sq.wo, V.a) {
+  pmax(0, V.a / nu.sq.wo)
+}
+
+# alignment (rho) between the covariate's effect on the outcome and on
+# selection: |Bias|/sqrt(V.g*V.a), signed by sign(Bias) and capped at 1 in
+# magnitude. Forced to 0 wherever `valid` is FALSE (i.e., V.g or V.a is
+# non-positive -- dropping the covariate did not actually reduce outcome
+# fit/treatment precision, so there is no meaningful bias to attribute to
+# it).
+benchmark_rho <- function(Bias, V.g, V.a, valid) {
+  Cor <- rep(0, length(Bias))
+  Cor[valid] <- abs(Bias[valid]) / sqrt(V.g[valid] * V.a[valid])
+  Cor <- pmin(1, Cor)
+  Cor * sign(Bias)
+}
 
 bench_fun <- function(model, benchmark_covariates){
 
@@ -151,23 +183,30 @@ bench_fun <- function(model, benchmark_covariates){
     psi.sigma2.s.wo <- lapply(model.wo$results$main[[1]], function(x) x$psis$psi.sigma2.s)
     psi.nu2.s.wo    <- lapply(model.wo$results$main[[1]], function(x) x$psis$psi.nu2.s)
 
-    Bias <- theta.short.wo - theta.short
+    # Bias = theta.short.wo - theta.short (without minus with). This
+    # specific direction is load-bearing: benchmark_rho()/psi.rho below
+    # implement rho = Bias/sqrt(V.g*V.a) with NO leading minus sign, which
+    # only reproduces the correct (true-correlation) sign of rho when Bias
+    # is defined this way. The manuscript's own formula (Chernozhukov et
+    # al., 2026, Table 3) is theta_{s,j} - theta_{s,empty} = -rho*Trend*
+    # Imbalance*Scale -- opposite subtraction order AND an explicit leading
+    # minus sign, which nets out to the same rho. To report `delta` in the
+    # manuscript's (with-minus-without) direction without breaking that
+    # internal consistency, we keep Bias as-is for all computation below and
+    # only negate it for the user-facing `delta` column (see `Delta`).
+    Bias  <- theta.short.wo - theta.short
+    Delta <- -Bias  # theta.short - theta.short.wo, for display only
 
     # V.g <- apply(resY.wo,2,var) - apply(resY,2,var)
     V.g <- sigma.sq.wo - sigma.sq
     V.a <- nu.sq - nu.sq.wo
-
     valid <- V.g > 0 & V.a > 0
-    Cor <- rep(0,length(valid))
-    Cor[valid] <- (abs(Bias[valid])/sqrt(V.g[valid]*V.a[valid]))
-    Cor <- pmin(1, Cor)
-    Cor <- Cor*sign(Bias)
+
+    Cor <- benchmark_rho(Bias, V.g, V.a, valid)
 
     #(1- R^2_{a~a_s}) =  (Ea^2 - Ea_s^2)/ E a^2
-
-    # Gain.Y = pmax(0, (R2.Y - R2.Y.wo)/(1 - R2.Y))
-    Gain.Y = pmax(0, (sigma.sq.wo - sigma.sq)/sigma.sq)
-    Gain.D = pmax(0, (nu.sq - nu.sq.wo)/nu.sq.wo)
+    Gain.Y <- benchmark_gain_y(sigma.sq, V.g)
+    Gain.D <- benchmark_gain_d(nu.sq.wo, V.a)
 
 
     bench <- data.frame(gain.Y = Gain.Y,
@@ -175,7 +214,7 @@ bench_fun <- function(model, benchmark_covariates){
                         rho = Cor,
                         theta.s  = theta.short,
                         theta.sj = theta.short.wo,
-                        delta = Bias)
+                        delta = Delta)
 
     benchmarks[[covar]] = bench
 
