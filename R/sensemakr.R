@@ -130,7 +130,7 @@ print.dml.sensemakr <- function(x,
     cat("\nVerbal interpretation of Benchmark Statistic:\n\n")
     cat("-- gain.Y: the observed strength of association of the benchmark covariate with the outcome.\n")
     cat("-- gain.D: the observed strength of association of the benchmark covariate with the RR.\n")
-    cat("-- delta: the change in the estimate from including the benchmark covariate (i.e., theta.s - theta.sj).")
+    cat("-- delta: the change in the estimate from omitting the benchmark covariate (i.e., theta.sj - theta.s).")
   }
 
   cat("For more information, check summary.")
@@ -178,7 +178,7 @@ summary.dml.sensemakr <- function(object,  digits = max(3L, getOption("digits") 
     cat("\nVerbal interpretation of Benchmark Statistic:\n\n")
     cat("-- gain.Y: the observed strength of association of the benchmark covariate with the outcome.\n")
     cat("-- gain.D: the observed strength of association of the benchmark covariate with the RR.\n")
-    cat("-- delta: the change in the estimate from including the benchmark covariate (i.e., theta.s - theta.sj).")
+    cat("-- delta: the change in the estimate from omitting the benchmark covariate (i.e., theta.sj - theta.s).")
   }
 
   if (object$model$info$model == "npm") {

@@ -1,8 +1,8 @@
 ##' Benchmarks for the strength of latent variables using observed covariates
 ##' @description
 ##' Compute benchmarks for the strength of latent variables, under the assumption that the gains in explanatory power due to latent variables is proportional to the gains of observed covariates.
-##' @param model an object of class \code{\link{dml}}.
-##' @param benchmark_covariates a character vector with the names of the observed covariates that will be used for benchmarking.
+##' @param model an object of class \code{\link{dml}}, fit with a single target (\code{"ate"}, \code{"att"}, or \code{"atu"}).
+##' @param benchmark_covariates the observed covariates to benchmark. Either a character vector of column names in the model's \code{x} (each benchmarked on its own), or a named list where each element is a character vector of column names to drop \emph{together} in the leave-one-out refit (e.g. the dummy columns of a factor: \code{list(region = c("region3", "region4"))}). List element names become the row labels; unnamed elements are labelled by the column name (singletons) or the columns joined by \code{"+"}.
 ##' @returns An object of class \code{dml_benchmark} containing benchmark results.
 ##' @export
 dml_benchmark <- function(model, benchmark_covariates){
@@ -23,17 +23,47 @@ print.dml_benchmark <- function(x, digits = max(3L, getOption("digits") - 3L),
 }
 
 ##' @param object an object of class \code{\link{dml_benchmark}}.
-##' @param combine.method method to combine results. Default is \code{"median"}, matching \code{summary.dml}/\code{summary.dml.bounds} elsewhere in this package.
+##' @param combine.method method to combine cross-fitting repetitions. Either \code{"median"} (default, matching \code{summary.dml}/\code{summary.dml.bounds} elsewhere in this package) or \code{"mean"}.
 ##' @param na.rm logical. Should NA values be removed? Default is \code{TRUE}.
 ##' @param ... arguments passed to other methods.
-##' @returns For \code{print}: the object, printed to console. For \code{summary}: an object of class \code{summary_dml_benchmark} with the aggregated benchmarks.
+##' @returns For \code{print}: the object, printed to console. For \code{summary}: an object of class \code{summary_dml_benchmark} holding a table of the benchmark components -- the leave-one-out gains \code{gain.Y} and \code{gain.D}, the alignment \code{rho}, and the bias contribution \code{delta} -- each with a standard error derived from its influence function and combined across cross-fitting repetitions.
 ##' @rdname summary.dml_benchmark
 ##' @export
-summary.dml_benchmark <- function(object, combine.method = "median", na.rm = TRUE, ...){
-  comb_fun <- get(combine.method)
-  out <- object
-  out$benchmarks <- t(sapply(object$benchmarks, function(x) apply(x,2, comb_fun, na.rm = na.rm)))
-  out$combine.method <- combine.method
+summary.dml_benchmark <- function(object, combine.method = c("median", "mean"),
+                                  na.rm = TRUE, ...){
+  combine.method <- match.arg(combine.method)
+  combine <- if (combine.method == "mean") combine.mean else combine.median
+  covars  <- names(object$benchmarks)
+
+  rows <- lapply(covars, function(v) {
+    est  <- object$benchmarks[[v]]        # per-rep point estimates (one row/rep)
+    psis <- object$benchmarks_psis[[v]]   # per-rep influence functions
+    reps <- seq_len(nrow(est))
+    se_of <- function(psi.list) sapply(reps, function(i) psi.sd(psi.list[[i]]))
+    # delta = theta.sj - theta.s (see bench_fun()), so its influence function
+    # is psi.theta.s.wo - psi.theta.s; psi.sd() is sign-invariant, so the
+    # order doesn't affect the resulting SE.
+    se.delta <- sapply(reps, function(i)
+      psi.sd(psis$psi.theta.s.wo[[i]] - psis$psi.theta.s[[i]]))
+    cGY <- combine(est$gain.Y, se_of(psis$psi.GY))
+    cGD <- combine(est$gain.D, se_of(psis$psi.GD))
+    cRH <- combine(est$rho,    se_of(psis$psi.rho))
+    cDL <- combine(est$delta,  se.delta)
+    c(gain.Y = unname(cGY["estimate"]), se.gain.Y = unname(cGY["se"]),
+      gain.D = unname(cGD["estimate"]), se.gain.D = unname(cGD["se"]),
+      rho    = unname(cRH["estimate"]), se.rho    = unname(cRH["se"]),
+      delta  = unname(cDL["estimate"]), se.delta  = unname(cDL["se"]))
+  })
+
+  tab <- do.call(rbind, rows)
+  rownames(tab) <- covars
+
+  # keep the influence functions on the summary object too (unlike a plain
+  # aggregation, which would silently drop them) -- downstream code may want
+  # to recompute SEs at a different combine.method without refitting anything
+  out <- list(benchmarks = tab,
+             benchmarks_psis = object$benchmarks_psis,
+             combine.method = combine.method)
   class(out) <- "summary_dml_benchmark"
   out
 }
@@ -44,6 +74,7 @@ print.summary_dml_benchmark <- function(x, digits = max(3L, getOption("digits") 
   cat("\nDebiased Machine Learning: Covariate Benchmarks\n\n")
   print(round(x$benchmarks, digits), ...)
   cat("\nNote: benchmarks combined using the", x$combine.method, "method.\n")
+  invisible(x)
 }
 
 # bench_plm <- function(model, benchmark_covariates) {
@@ -135,67 +166,125 @@ benchmark_rho <- function(Bias, V.g, V.a, valid) {
   Cor * sign(Bias)
 }
 
-bench_fun <- function(model, benchmark_covariates){
+# maps a dml target to the name of its slot in model$results$main (only
+# meaningful for npm models -- see resolve_benchmark_slot())
+.target_to_slot <- c(ate = "all", att = "treat", atu = "untr")
 
-  # if (is.null(model$results$main$all)) stop("Benchmarks implemented for ATE only. ATT/ATU coming soon.")
-  x <- model$data$x
-  which.not <- which(!benchmark_covariates %in% colnames(x))
+# resolves which slot of model$results$main to read from. plm models always
+# store their (single) results under "all", regardless of the declared
+# target -- dml() accepts target = "att"/"atu" for a plm model without
+# erroring, but only npm's ate.att.atu.npm() actually computes distinct
+# target-specific slots, so model type is checked explicitly here rather
+# than trusting target alone. Errors if the model was fit with more than one
+# target (benchmarking a multi-target fit is ambiguous: which slot's
+# theta.s/sigma2.s/nu2.s should the leave-one-out comparison use?).
+#
+# Note: the resulting rho/psi.rho have only been verified (against the
+# manuscript's published numbers) for att-slot models; ate/atu are computed
+# with the same, unmodified formula but that has not been independently
+# verified for those targets specifically.
+resolve_benchmark_slot <- function(model) {
+  if (identical(model$info$model, "plm")) {
+    return("all")
+  }
+  slot <- unname(.target_to_slot[model$info$target])
+  if (length(slot) != 1L || is.na(slot)) {
+    stop("dml_benchmark() requires a model fit with a single target ",
+        "('ate', 'att', or 'atu').")
+  }
+  slot
+}
 
-  if (any(which.not)){
-    stop("Covariates not found: ", paste(benchmark_covariates[which.not], collapse = ", "), ".")
+# normalizes benchmark_covariates into a named list of column-name groups. A
+# character vector benchmarks each column on its own; a named list lets a
+# group of columns (e.g. the dummies of a factor) be dropped together in the
+# leave-one-out refit. Element names become the row labels; unnamed elements
+# are labelled by the column name (singletons) or the columns joined by "+".
+normalize_benchmark_groups <- function(benchmark_covariates, x) {
+  groups <- if (is.list(benchmark_covariates)) benchmark_covariates
+           else as.list(benchmark_covariates)
+
+  group.names <- names(groups)
+  if (is.null(group.names)) group.names <- rep("", length(groups))
+
+  for (i in seq_along(groups)) {
+    cols <- groups[[i]]
+    if (!is.character(cols) || length(cols) < 1L) {
+      stop("Each entry of 'benchmark_covariates' must be a non-empty ",
+          "character vector of column names.")
+    }
+    if (is.na(group.names[i]) || group.names[i] == "") {
+      group.names[i] <- if (length(cols) == 1L) cols else paste(cols, collapse = "+")
+    }
+  }
+  names(groups) <- group.names
+
+  all.cols  <- unlist(groups, use.names = FALSE)
+  which.not <- which(!all.cols %in% colnames(x))
+  if (length(which.not) > 0) {
+    stop("Covariates not found: ", paste(all.cols[which.not], collapse = ", "), ".")
   }
 
-  nu.sq <- extract_estimate(model$results$main[[1]], param = "nu2.s")
-  sigma.sq <- extract_estimate(model$results$main[[1]], param = "sigma2.s")
+  groups
+}
+
+bench_fun <- function(model, benchmark_covariates){
+
+  slot <- resolve_benchmark_slot(model)
+  x <- model$data$x
+  covariate.groups <- normalize_benchmark_groups(benchmark_covariates, x)
+
+  nu.sq <- extract_estimate(model$results$main[[slot]], param = "nu2.s")
+  sigma.sq <- extract_estimate(model$results$main[[slot]], param = "sigma2.s")
 
   # resY  <- sapply(model$fits, function(x)model$data$y-x$preds$yhat)
   # R2.Y  <- apply(resY, 2, function(x) max(1-var(x)/var(model$data$y),0))
 
-  theta.short <- extract_estimate(model$results$main[[1]], "theta.s")
+  theta.short <- extract_estimate(model$results$main[[slot]], "theta.s")
 
   # short IFs
-  psi.theta.s  <- lapply(model$results$main[[1]], function(x) x$psis$psi.theta.s)
-  psi.sigma2.s <- lapply(model$results$main[[1]], function(x) x$psis$psi.sigma2.s)
-  psi.nu2.s    <- lapply(model$results$main[[1]], function(x) x$psis$psi.nu2.s)
+  psi.theta.s  <- lapply(model$results$main[[slot]], function(x) x$psis$psi.theta.s)
+  psi.sigma2.s <- lapply(model$results$main[[slot]], function(x) x$psis$psi.sigma2.s)
+  psi.nu2.s    <- lapply(model$results$main[[slot]], function(x) x$psis$psi.nu2.s)
 
   benchmarks <- list()
   benchmarks_psis <- list()
-  for (i in seq_along(benchmark_covariates)) {
-    covar <- benchmark_covariates[i]
+  for (covar in names(covariate.groups)) {
+    cols <- covariate.groups[[covar]]
     cat("\n=== Computing benchmarks using covariate:", covar, " ===\n\n")
-    index.o <- which(colnames(x) == covar)
-    xo <- x[,-index.o]
+    index.o <- which(colnames(x) %in% cols)   # drop all columns in the group
+    xo <- x[, -index.o, drop = FALSE]
     model.call <- model$call
     model.call["x"] <- call("xo")
     model.wo <- eval(model.call)
 
-    nu.sq.wo <- extract_estimate(model.wo$results$main[[1]], param = "nu2.s")
-    sigma.sq.wo <- extract_estimate(model.wo$results$main[[1]], param = "sigma2.s")
+    nu.sq.wo <- extract_estimate(model.wo$results$main[[slot]], param = "nu2.s")
+    sigma.sq.wo <- extract_estimate(model.wo$results$main[[slot]], param = "sigma2.s")
 
     # resY.wo  <- sapply(model.wo$fits, function(x) model.wo$data$y - x$preds$yhat)
     # R2.Y.wo  <- apply(resY.wo, 2, function(x) max(1-var(x)/var(model.wo$data$y),0))
 
     ## (Debiased) Bias Decomposition
-    theta.short.wo <- extract_estimate(model.wo$results$main[[1]], "theta.s")
+    theta.short.wo <- extract_estimate(model.wo$results$main[[slot]], "theta.s")
 
     # benchmark IFs
-    psi.theta.s.wo  <- lapply(model.wo$results$main[[1]], function(x) x$psis$psi.theta.s)
-    psi.sigma2.s.wo <- lapply(model.wo$results$main[[1]], function(x) x$psis$psi.sigma2.s)
-    psi.nu2.s.wo    <- lapply(model.wo$results$main[[1]], function(x) x$psis$psi.nu2.s)
+    psi.theta.s.wo  <- lapply(model.wo$results$main[[slot]], function(x) x$psis$psi.theta.s)
+    psi.sigma2.s.wo <- lapply(model.wo$results$main[[slot]], function(x) x$psis$psi.sigma2.s)
+    psi.nu2.s.wo    <- lapply(model.wo$results$main[[slot]], function(x) x$psis$psi.nu2.s)
 
     # Bias = theta.short.wo - theta.short (without minus with). This
     # specific direction is load-bearing: benchmark_rho()/psi.rho below
     # implement rho = Bias/sqrt(V.g*V.a) with NO leading minus sign, which
     # only reproduces the correct (true-correlation) sign of rho when Bias
-    # is defined this way. The manuscript's own formula (Chernozhukov et
-    # al., 2026, Table 3) is theta_{s,j} - theta_{s,empty} = -rho*Trend*
-    # Imbalance*Scale -- opposite subtraction order AND an explicit leading
-    # minus sign, which nets out to the same rho. To report `delta` in the
-    # manuscript's (with-minus-without) direction without breaking that
-    # internal consistency, we keep Bias as-is for all computation below and
-    # only negate it for the user-facing `delta` column (see `Delta`).
+    # is defined this way. It also matches the manuscript's own definition
+    # of the benchmarking "change in estimate" (Appendix E.1, Chernozhukov
+    # et al., 2026): Delta_{s,j} := Em(W,g_{s,-j}) - Em(W,g_s), i.e.
+    # theta_{s,j} (without the covariate) minus theta_s (with it) -- the
+    # same without-minus-with direction as Bias. So `delta` is just `Bias`,
+    # not its negation; verified against Table 3's reported values (e.g.
+    # income: Delta_hat = 3,349, positive, matching theta.sj > theta.s).
     Bias  <- theta.short.wo - theta.short
-    Delta <- -Bias  # theta.short - theta.short.wo, for display only
+    Delta <- Bias  # theta.short.wo - theta.short, matches manuscript's Delta_{s,j}
 
     # V.g <- apply(resY.wo,2,var) - apply(resY,2,var)
     V.g <- sigma.sq.wo - sigma.sq

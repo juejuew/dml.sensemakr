@@ -79,6 +79,75 @@ test_that("benchmark_rho handles a mixed-validity vector element-by-element", {
   expect_equal(result[3], -1)   # |-4|/sqrt(1*4) = 2 -> capped at 1, signed negative
 })
 
+# === resolve_benchmark_slot ===
+# Pure helper (no model fitting needed): a minimal fake model list with just
+# the two fields resolve_benchmark_slot() actually reads is enough.
+fake_target_model <- function(model.type, target) {
+  list(info = list(model = model.type, target = target))
+}
+
+test_that("resolve_benchmark_slot always returns 'all' for plm models, regardless of target", {
+  # plm never computes distinct att/atu slots, even if target was set to one
+  expect_equal(dml.sensemakr:::resolve_benchmark_slot(fake_target_model("plm", "ate")), "all")
+  expect_equal(dml.sensemakr:::resolve_benchmark_slot(fake_target_model("plm", "att")), "all")
+  expect_equal(dml.sensemakr:::resolve_benchmark_slot(fake_target_model("plm", "atu")), "all")
+})
+
+test_that("resolve_benchmark_slot maps npm targets to the correct slot", {
+  expect_equal(dml.sensemakr:::resolve_benchmark_slot(fake_target_model("npm", "ate")), "all")
+  expect_equal(dml.sensemakr:::resolve_benchmark_slot(fake_target_model("npm", "att")), "treat")
+  expect_equal(dml.sensemakr:::resolve_benchmark_slot(fake_target_model("npm", "atu")), "untr")
+})
+
+test_that("resolve_benchmark_slot errors on a multi-target npm model", {
+  expect_error(dml.sensemakr:::resolve_benchmark_slot(fake_target_model("npm", c("ate", "att"))),
+              "single target")
+})
+
+test_that("resolve_benchmark_slot errors on an unrecognized target", {
+  expect_error(dml.sensemakr:::resolve_benchmark_slot(fake_target_model("npm", "bogus")),
+              "single target")
+})
+
+# === normalize_benchmark_groups ===
+test_that("normalize_benchmark_groups labels a character vector by each column name", {
+  x <- cbind(a = 1:3, b = 1:3, c = 1:3)
+  groups <- dml.sensemakr:::normalize_benchmark_groups(c("a", "b"), x)
+  expect_named(groups, c("a", "b"))
+  expect_equal(groups$a, "a")
+  expect_equal(groups$b, "b")
+})
+
+test_that("normalize_benchmark_groups auto-labels an unnamed list (singleton vs. joined)", {
+  x <- cbind(a = 1:3, b = 1:3, c = 1:3)
+  groups <- dml.sensemakr:::normalize_benchmark_groups(list("a", c("b", "c")), x)
+  expect_named(groups, c("a", "b+c"))
+})
+
+test_that("normalize_benchmark_groups honors user-supplied group names", {
+  x <- cbind(a = 1:3, b = 1:3, c = 1:3)
+  groups <- dml.sensemakr:::normalize_benchmark_groups(list(grp = c("b", "c")), x)
+  expect_named(groups, "grp")
+  expect_equal(groups$grp, c("b", "c"))
+})
+
+test_that("normalize_benchmark_groups handles a mix of named and unnamed entries", {
+  x <- cbind(a = 1:3, b = 1:3, c = 1:3)
+  groups <- dml.sensemakr:::normalize_benchmark_groups(list(grp = c("b", "c"), "a"), x)
+  expect_named(groups, c("grp", "a"))
+})
+
+test_that("normalize_benchmark_groups errors on a non-character or empty entry", {
+  x <- cbind(a = 1:3, b = 1:3)
+  expect_error(dml.sensemakr:::normalize_benchmark_groups(list(1), x), "non-empty")
+  expect_error(dml.sensemakr:::normalize_benchmark_groups(list(character(0)), x), "non-empty")
+})
+
+test_that("normalize_benchmark_groups errors when a covariate is not found", {
+  x <- cbind(a = 1:3, b = 1:3)
+  expect_error(dml.sensemakr:::normalize_benchmark_groups(list(c("a", "zzz")), x), "zzz")
+})
+
 # === replication of Table 3 (Chernozhukov et al., 2026) ===
 # Table 3 ("Decomposition of the observed confounding strength", Appendix C)
 # reports, per covariate: Bias = theta_{s,j} - theta_{s,empty}, Alignment
@@ -102,10 +171,11 @@ test_that("benchmark_rho handles a mixed-validity vector element-by-element", {
 # theta_{s,empty} = -rho*Trend*Imbalance*Scale -- opposite subtraction order
 # AND an explicit leading minus sign, which nets out to the same rho. So the
 # manuscript's raw reported Bias must be negated before it matches what
-# benchmark_rho() expects as input (this is exactly what `bench_fun()` does
-# internally: it computes Bias in this same without-minus-with direction for
-# all of Cor/psi.rho, and only negates it when building the user-facing
-# `delta` column).
+# benchmark_rho() expects as input. This without-minus-with direction is also
+# the manuscript's own convention for the benchmarking "change in estimate"
+# (Appendix E.1: Delta_{s,j} := Em(W,g_{s,-j}) - Em(W,g_s), i.e. without
+# minus with) -- so `bench_fun()` uses this same `Bias` directly, unmodified,
+# for both `Cor`/`psi.rho` and the user-facing `delta` column.
 test_that("benchmark_gain_y/benchmark_gain_d/benchmark_rho replicate Table 3's Xall row", {
   # empty-covariate-set baseline, given exactly in the note below Table 3
   sigma.sq.empty <- 0.024
@@ -176,11 +246,12 @@ test_that("dml_benchmark$benchmarks_psis has the expected structure", {
 })
 
 test_that("delta equals the exact difference between the with/without short estimates", {
-  # delta is reported in the manuscript's direction: theta.s (with the
-  # covariate) minus theta.sj (without it) -- see the sign-convention note
+  # delta is reported in the manuscript's direction (Appendix E.1):
+  # Delta_{s,j} := Em(W,g_{s,-j}) - Em(W,g_s), i.e. theta.sj (without the
+  # covariate) minus theta.s (with it) -- see the sign-convention note
   # above the Table 3 replication test.
   b <- bench_single$benchmarks$inc
-  expect_equal(b$delta, b$theta.s - b$theta.sj)
+  expect_equal(b$delta, b$theta.sj - b$theta.s)
 })
 
 test_that("gain.Y and gain.D are non-negative for every benchmark covariate", {
@@ -239,6 +310,28 @@ test_that("dml_benchmark works with a nonparametric (npm) model", {
               c("gain.Y", "gain.D", "rho", "theta.s", "theta.sj", "delta"))
 })
 
+test_that("dml_benchmark supports dropping a group of columns together", {
+  bench_grp <- dml_benchmark(bench_fit, benchmark_covariates = list(grp = c("marr", "twoearn")))
+  expect_named(bench_grp$benchmarks, "grp")
+  expect_equal(colnames(bench_grp$benchmarks$grp),
+              c("gain.Y", "gain.D", "rho", "theta.s", "theta.sj", "delta"))
+})
+
+test_that("dml_benchmark works with an ATT-target nonparametric model", {
+  att_fit <- dml(y, d, x, model = "npm", target = "att",
+                 cf.folds = 2, cf.reps = 1, verbose = FALSE)
+  bench_att <- dml_benchmark(att_fit, benchmark_covariates = "inc")
+  expect_s3_class(bench_att, "dml_benchmark")
+  expect_equal(colnames(bench_att$benchmarks$inc),
+              c("gain.Y", "gain.D", "rho", "theta.s", "theta.sj", "delta"))
+})
+
+test_that("dml_benchmark errors on a model fit with more than one target", {
+  multi_fit <- dml(y, d, x, model = "npm", target = c("ate", "att"),
+                   cf.folds = 2, cf.reps = 1, verbose = FALSE)
+  expect_error(dml_benchmark(multi_fit, benchmark_covariates = "inc"), "single target")
+})
+
 test_that("summary.dml_benchmark returns a classed object with aggregated values", {
   s <- summary(bench_npm, combine.method = "mean")
   expect_s3_class(s, "summary_dml_benchmark")
@@ -246,6 +339,16 @@ test_that("summary.dml_benchmark returns a classed object with aggregated values
   # summary() must still carry the influence functions along, unlike before
   # the fix (where it returned a bare matrix and dropped everything else)
   expect_true(!is.null(s$benchmarks_psis))
+})
+
+test_that("summary.dml_benchmark reports a standard error alongside every estimate", {
+  s <- summary(bench_npm, combine.method = "mean")
+  expect_equal(colnames(s$benchmarks),
+              c("gain.Y", "se.gain.Y", "gain.D", "se.gain.D",
+                "rho", "se.rho", "delta", "se.delta"))
+  se.cols <- s$benchmarks[, c("se.gain.Y", "se.gain.D", "se.rho", "se.delta")]
+  expect_true(all(se.cols >= 0))
+  expect_true(all(is.finite(s$benchmarks)))
 })
 
 test_that("summary.dml_benchmark aggregates across cross-fitting repetitions correctly", {
