@@ -5,14 +5,14 @@
 \alias{extreme_robustness_value.dml}
 \title{Computes Extreme Robustness Values for Debiased Machine Learning}
 \usage{
-extreme_robustness_value(model, ...)
+extreme_robustness_value(...)
 
 \method{extreme_robustness_value}{dml}(model, theta = 0, alpha = 0.05, rho2 = 1, ...)
 }
 \arguments{
-\item{model}{an object of class \code{\link{dml}}.}
-
 \item{...}{arguments passed to other methods.}
+
+\item{model}{an object of class \code{\link{dml}}.}
 
 \item{theta}{the null hypothesis of interest for the target parameter theta. Default is \code{theta = 0} (zero null hypothesis).}
 

@@ -389,9 +389,7 @@ xrv_fun <- function(dml.fit, xrv, par, side = "lwr", theta = 0, alpha = 0.05, rh
 ##'
 ##' @returns A named numeric vector of extreme robustness values.
 ##' @export
-extreme_robustness_value <- function(model, ...) {
-  UseMethod("extreme_robustness_value")
-}
+extreme_robustness_value <- sensemakr::extreme_robustness_value
 
 ##' @rdname extreme_robustness_value
 ##' @param model an object of class \code{\link{dml}}.
@@ -399,7 +397,7 @@ extreme_robustness_value <- function(model, ...) {
 ##' @param alpha significance level. Default is \code{alpha = 0.05}. Setting \code{alpha = 1} uses a closed-form point XRV (no confidence-level adjustment) instead of the numerical search used for \code{alpha < 1}.
 ##' @param rho2 degree of adversity. Default is \code{rho2 = 1}, which assumes the maximum degree of adversity of confounding.
 ##' @inheritParams summary.dml
-##' @exportS3Method extreme_robustness_value dml
+##' @exportS3Method sensemakr::extreme_robustness_value dml
 extreme_robustness_value.dml <- function(model, theta = 0, alpha = 0.05, rho2 = 1, ...){
   conf <- confint(model, level = 1 - alpha, ...)
   out <- setNames(rep(NA, nrow(conf)), rownames(conf))
