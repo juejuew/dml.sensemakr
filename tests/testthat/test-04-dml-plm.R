@@ -28,6 +28,19 @@ test_that("dml() returns correct class and structure for PLM", {
   expect_equal(fit$info$cf.reps, 2)
 })
 
+test_that("dml() always stores a resolved cf.seed in its call, even when not supplied", {
+  # cf.seed was not passed to dml() in setup_plm, so this checks that it
+  # gets auto-resolved to a concrete value and stamped into fit$call --
+  # this is what lets dml_benchmark()'s leave-one-out refit (built by
+  # re-evaluating that same call with only `x` swapped) share the same
+  # cross-fitting fold partition as the original fit, instead of drawing
+  # an independent one.
+  fit <- setup_plm$fit
+  expect_true("cf.seed" %in% names(fit$call))
+  expect_true(is.numeric(fit$call$cf.seed))
+  expect_length(fit$call$cf.seed, 1)
+})
+
 test_that("dml() stores data correctly", {
   fit <- setup_plm$fit
   expect_equal(fit$data$y, setup_plm$y)
@@ -175,6 +188,21 @@ test_that("confidence_bounds.dml.bounds returns correct structure", {
   expect_true(all(cb[, "lwr"] < cb[, "upr"]))
 })
 
+# === dml_bounds()/prep_dml_bounds() caching equivalence, on a real fit ===
+test_that("dml_bounds() gives identical output with and without a precomputed `fixed`", {
+  fixed <- dml.sensemakr:::prep_dml_bounds(setup_plm$fit)
+  without <- dml_bounds(setup_plm$fit, cf.y = 0.04, cf.d = 0.03, rho2 = 1)
+  with    <- dml_bounds(setup_plm$fit, cf.y = 0.04, cf.d = 0.03, rho2 = 1, fixed = fixed)
+  expect_equal(with, without)
+})
+
+test_that("confidence_bounds.dml gives identical output with and without a precomputed `fixed`", {
+  fixed <- dml.sensemakr:::prep_dml_bounds(setup_plm$fit)
+  without <- confidence_bounds(setup_plm$fit, cf.y = 0.04, cf.d = 0.03, rho2 = 1)
+  with    <- confidence_bounds(setup_plm$fit, cf.y = 0.04, cf.d = 0.03, rho2 = 1, fixed = fixed)
+  expect_equal(with, without)
+})
+
 # === robustness_value ===
 test_that("robustness_value.dml returns named numeric", {
   rv <- robustness_value(setup_plm$fit)
@@ -189,6 +217,109 @@ test_that("robustness_value.dml.bounds returns named numeric", {
   expect_type(rv, "double")
   expect_true(length(rv) > 0)
   expect_true(all(rv >= 0 & rv <= 1))
+})
+
+# === extreme_robustness_value ===
+test_that("extreme_robustness_value.dml returns named numeric", {
+  xrv <- extreme_robustness_value(setup_plm$fit)
+  expect_type(xrv, "double")
+  expect_true(length(xrv) > 0)
+  expect_true(all(xrv >= 0 & xrv <= 1))
+})
+
+test_that("extreme_robustness_value is never larger than robustness_value", {
+  # XRV fixes cf.y = 1 (its maximum) and searches only cf.d, while RV
+  # searches cf.y = cf.d jointly. Solving sqrt(cf.y*cf.d/(1-cf.d)) = k for a
+  # fixed target k: RV solves r^2/(1-r) = k^2 (r = cf.y = cf.d), XRV solves
+  # r/(1-r) = k^2 (r = cf.d, cf.y = 1 fixed). Since r^2 < r on (0,1), the
+  # solution to the first equation is always >= the solution to the second
+  # for the same k -- i.e. XRV <= RV always, for the same theta/alpha/rho2.
+  rv  <- robustness_value(setup_plm$fit, theta = 0, alpha = 0.05)
+  xrv <- extreme_robustness_value(setup_plm$fit, theta = 0, alpha = 0.05)
+  expect_true(all(xrv <= rv + 1e-6))
+})
+
+test_that("extreme_robustness_value's alpha = 1 closed-form path runs without error", {
+  xrv <- extreme_robustness_value(setup_plm$fit, theta = 0, alpha = 1)
+  expect_type(xrv, "double")
+  expect_true(all(is.finite(xrv)))
+  expect_true(all(xrv >= 0 & xrv <= 1))
+})
+
+test_that("extreme_robustness_value's alpha = 1 closed form agrees with the general search", {
+  # confidence_bounds.numeric() clamps level = 1 - alpha to a floor of 0.5
+  # (level[level < 0.5] <- 0.5), so qnorm(level) = 0 for ANY alpha >= 0.5 --
+  # the SE-adjustment term vanishes and the general optim()-based search
+  # degenerates to exactly the same "point bound only" condition the closed
+  # form solves. So alpha = 1 and, e.g., alpha = 0.7 should give the same
+  # answer (up to optim()'s finite convergence tolerance), even though they
+  # take completely different code paths internally.
+  xrv_closed  <- extreme_robustness_value(setup_plm$fit, theta = 0, alpha = 1)
+  xrv_general <- extreme_robustness_value(setup_plm$fit, theta = 0, alpha = 0.7)
+  expect_equal(unname(xrv_closed), unname(xrv_general), tolerance = 1e-3)
+})
+
+# === NA short-circuit when nu2.s < 0 (row_is_undefined()) ===
+# nu2.s does not depend on cf.y/cf.d, so if it's negative for even one
+# cf.rep, S = sqrt(sigma2.s*nu2.s) is NaN for that rep regardless of
+# cf.y/cf.d, and combine.mean()/combine.median() (no na.rm) propagate that
+# into an NA combined bound for EVERY cf.y/cf.d -- the row's
+# confidence_bounds() is a constant-NA function over the whole search
+# domain. optim(method = "Brent") does not error or return NA on a
+# constant-NA objective: it deterministically converges to its `upper`
+# bound (verified empirically outside this test suite), which looks like an
+# ordinary, meaningful RV/XRV but carries no real information. These tests
+# confirm robustness_value()/extreme_robustness_value() detect this case up
+# front (via row_is_undefined()) and return an honest NA instead.
+test_that("row_is_undefined() detects a negative nu2.s in any cf.rep", {
+  good_rep <- list(nu2.s = 0.5)
+  bad_rep  <- list(nu2.s = -0.5)
+  fixed <- list(main = list(all = list(good_rep, good_rep)),
+               groups = list(low = list(good_rep, bad_rep)))
+  expect_false(dml.sensemakr:::row_is_undefined(fixed, list(main = "all", groups = NULL)))
+  expect_true(dml.sensemakr:::row_is_undefined(fixed, list(main = NULL, groups = "low")))
+})
+
+test_that("robustness_value()/extreme_robustness_value() return NA (not a misleading number) when nu2.s < 0", {
+  # Hand-built PLM-shaped dml object (mirroring ate.plm()'s actual output
+  # structure in R/short-parameters.R) with two cf.reps for a single "all"
+  # slot: one well-behaved, one with a deliberately negative nu2.s. This
+  # forces the pathological case directly and deterministically, rather
+  # than relying on incidental sampling noise from a real ranger fit (which
+  # is what actually triggers this in practice, but isn't reproducible
+  # enough to hang a test on).
+  n <- 200
+  set.seed(321)
+  x <- rnorm(n); d <- x + rnorm(n); y <- 2 * d + x + rnorm(n)
+  make_rep <- function(nu2.s) {
+    yhat <- x; dhat <- x
+    resY <- y - yhat; resD <- d - dhat
+    RRs <- resD / mean(resD^2)
+    theta.s <- mean(resY * RRs)
+    eresY <- resY - theta.s * resD
+    psi.theta.s  <- eresY * RRs
+    sigma2.s     <- mean(eresY^2)
+    psi.sigma2.s <- eresY^2 - sigma2.s
+    psi.nu2.s    <- rnorm(n, sd = 0.01)  # arbitrary; only nu2.s's sign matters here
+    list(
+      psis = list(psi.theta.s = psi.theta.s, psi.sigma2.s = psi.sigma2.s, psi.nu2.s = psi.nu2.s),
+      estimates = list(theta.s = theta.s, se.theta.s = dml.sensemakr:::psi.sd(psi.theta.s),
+                       sigma2.s = sigma2.s, nu2.s = nu2.s)
+    )
+  }
+  good_rep <- make_rep(nu2.s = 1.2)
+  bad_rep  <- make_rep(nu2.s = -0.8)
+
+  model <- list(info = list(model = "plm", target = "ate"),
+               results = list(main = list(all = list(good_rep, bad_rep))))
+  model$coefs$main <- list(all = dml.sensemakr:::combine.cross.fits(model$results$main$all))
+  class(model) <- "dml"
+
+  expect_warning(rv <- robustness_value(model), "nu\\^2 is negative")
+  expect_warning(xrv <- extreme_robustness_value(model), "nu\\^2 is negative")
+
+  expect_true(is.na(rv[["ate.all"]]))
+  expect_true(is.na(xrv[["ate.all"]]))
 })
 
 # === sensemakr ===

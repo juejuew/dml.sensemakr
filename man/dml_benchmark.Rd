@@ -7,12 +7,12 @@
 dml_benchmark(model, benchmark_covariates)
 }
 \arguments{
-\item{model}{an object of class \code{\link{dml}}.}
+\item{model}{an object of class \code{\link{dml}}, fit with a single target (\code{"ate"}, \code{"att"}, or \code{"atu"}).}
 
-\item{benchmark_covariates}{a character vector with the names of the observed covariates that will be used for benchmarking.}
+\item{benchmark_covariates}{the observed covariates to benchmark. Either a character vector of column names in the model's \code{x} (each benchmarked on its own), or a named list where each element is a character vector of column names to drop \emph{together} in the leave-one-out refit (e.g. the dummy columns of a factor: \code{list(region = c("region3", "region4"))}). List element names become the row labels; unnamed elements are labelled by the column name (singletons) or the columns joined by \code{"+"}.}
 }
 \value{
-An object of class \code{dml_benchmark} containing benchmark results.
+An object of class \code{dml_benchmark} containing benchmark results. \code{gain.Y} and \code{gain.D} are population non-negative quantities, but their DML estimates are reported as-is (not floored at 0): a small negative value is expected sampling noise when the covariate's true gain is near zero, and reflects that rather than an impossible negative population value.
 }
 \description{
 Compute benchmarks for the strength of latent variables, under the assumption that the gains in explanatory power due to latent variables is proportional to the gains of observed covariates.

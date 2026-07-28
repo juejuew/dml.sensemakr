@@ -84,6 +84,60 @@ test_that("bounds() with zero sensitivity parameters gives zero bias", {
   expect_equal(result$estimates$theta.p, result$estimates$theta.s)
 })
 
+# === bounds()/prep_bounds() caching equivalence ===
+# robustness_value()/extreme_robustness_value() now precompute the
+# cf.y/cf.d/rho2-invariant quantities once (via prep_bounds()/
+# prep_dml_bounds()) and pass them into bounds()/dml_bounds() as `fixed`,
+# instead of recomputing them on every optim() evaluation. These tests
+# check that supplying a precomputed `fixed` gives EXACTLY the same result
+# as the original, no-`fixed` computation -- this is the core correctness
+# guarantee the whole optimization rests on.
+test_that("bounds() gives identical output with and without a precomputed `fixed`", {
+  n <- 100
+  set.seed(7)
+  short.results <- list(
+    estimates = list(theta.s = 5.0, sigma2.s = 2.0, nu2.s = 0.5),
+    psis = list(
+      psi.theta.s = rnorm(n, sd = 0.1),
+      psi.sigma2.s = rnorm(n, sd = 0.1),
+      psi.nu2.s = rnorm(n, sd = 0.1)
+    )
+  )
+
+  fixed <- dml.sensemakr:::prep_bounds(short.results)
+
+  for (cfy in c(0, 0.02, 0.15, 0.5)) {
+    for (cfd in c(0.01, 0.1, 0.4)) {
+      without <- dml.sensemakr:::bounds(short.results, cf.y = cfy, cf.d = cfd, rho2 = 1)
+      with    <- dml.sensemakr:::bounds(short.results, cf.y = cfy, cf.d = cfd, rho2 = 1, fixed = fixed)
+      expect_equal(with, without)
+    }
+  }
+})
+
+test_that("prep_bounds() extracts exactly the fixed inputs bounds() would otherwise recompute", {
+  n <- 30
+  set.seed(3)
+  short.results <- list(
+    estimates = list(theta.s = 1.5, sigma2.s = 0.8, nu2.s = 1.2),
+    psis = list(
+      psi.theta.s = rnorm(n, sd = 0.2),
+      psi.sigma2.s = rnorm(n, sd = 0.2),
+      psi.nu2.s = rnorm(n, sd = 0.2)
+    )
+  )
+  fixed <- dml.sensemakr:::prep_bounds(short.results)
+
+  expect_equal(fixed$theta.s, short.results$estimates$theta.s)
+  expect_equal(fixed$nu2.s, short.results$estimates$nu2.s)
+  expect_equal(fixed$psi.theta.s, short.results$psis$psi.theta.s)
+  expect_equal(fixed$S, sqrt(short.results$estimates$sigma2.s * short.results$estimates$nu2.s))
+  expect_equal(fixed$psi.S2,
+              short.results$estimates$sigma2.s * short.results$psis$psi.nu2.s +
+                short.results$estimates$nu2.s * short.results$psis$psi.sigma2.s)
+  expect_equal(fixed$se.theta.s, dml.sensemakr:::psi.sd(short.results$psis$psi.theta.s))
+})
+
 
 # === ate.plm ===
 test_that("ate.plm computes correct ATE in simple case", {

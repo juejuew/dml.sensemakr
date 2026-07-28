@@ -95,3 +95,24 @@ test_that("robustness_value returns 0 when CI includes theta", {
   rv <- robustness_value(fit, theta = theta_inside)
   expect_equal(rv[[1]], 0)
 })
+
+# === extreme_robustness_value edge case: already includes zero ===
+test_that("extreme_robustness_value returns 0 when CI includes theta", {
+  # Guards a real bug found when porting this function: the loop's
+  # early-exit branch (out[i] <- 0 when theta is already inside the CI) was
+  # missing the `next` that the analogous robustness_value.dml() loop has,
+  # so the shortcut value was silently overwritten by the subsequent
+  # computation. Same fixture/setup as the robustness_value version above.
+  data("pension", package = "dml.sensemakr")
+  set.seed(55)
+  idx <- sample(nrow(pension), 300)
+  y <- pension$net_tfa[idx]
+  d <- pension$e401[idx]
+  x <- model.matrix(~ -1 + age + inc + educ, data = pension[idx, ])
+  fit <- dml(y, d, x, model = "plm", cf.folds = 2, cf.reps = 1, verbose = FALSE)
+
+  ci <- confint(fit)
+  theta_inside <- mean(ci[1, ])  # midpoint of CI
+  xrv <- extreme_robustness_value(fit, theta = theta_inside)
+  expect_equal(xrv[[1]], 0)
+})

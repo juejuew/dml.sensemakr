@@ -46,7 +46,7 @@ dml_gate(dml.fit, groups, ...)
 
 \item{cf.reps}{number of cross-fitting repetitions. Default is \code{1}.}
 
-\item{cf.seed}{optional integer. A random seed for reproducibility of fold assignments.}
+\item{cf.seed}{optional integer. A random seed for reproducibility of fold assignments. If left \code{NULL} (the default), one is generated automatically and stored in the returned object's \code{call} (so the fit is still fully reproducible from it) -- this also means a \code{\link{dml_benchmark}} leave-one-covariate-out refit, which is built by re-evaluating that same call, automatically shares the same cross-fitting fold partition as the original fit, rather than drawing an independent one.}
 
 \item{ps.trim}{trims propensity scores lower than \code{ps.trim} and greater than \code{1-ps.trim}, in order to obtain more stable estimates. Alternatively, a named list with elements \code{lower} and \code{upper} specifying the lower and upper bounds for trimming. This is only relevant for the case of a binary treatment and when \code{model = "npm"}.}
 

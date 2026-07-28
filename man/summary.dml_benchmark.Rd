@@ -13,7 +13,7 @@
   ...
 )
 
-\method{summary}{dml_benchmark}(object, combine.method = "median", na.rm = TRUE, ...)
+\method{summary}{dml_benchmark}(object, combine.method = c("median", "mean"), na.rm = TRUE, ...)
 
 \method{print}{summary_dml_benchmark}(x, digits = max(3L, getOption("digits") - 3L), ...)
 }
@@ -22,7 +22,7 @@
 
 \item{digits}{minimal number of significant digits.}
 
-\item{combine.method}{method to combine results. Default is \code{"median"}, matching \code{summary.dml}/\code{summary.dml.bounds} elsewhere in this package.}
+\item{combine.method}{method to combine cross-fitting repetitions. Either \code{"median"} (default, matching \code{summary.dml}/\code{summary.dml.bounds} elsewhere in this package) or \code{"mean"}.}
 
 \item{...}{arguments passed to other methods.}
 
@@ -31,7 +31,7 @@
 \item{na.rm}{logical. Should NA values be removed? Default is \code{TRUE}.}
 }
 \value{
-For \code{print}: the object, printed to console. For \code{summary}: an object of class \code{summary_dml_benchmark} with the aggregated benchmarks.
+For \code{print}: the object, printed to console. For \code{summary}: an object of class \code{summary_dml_benchmark} holding a table of the benchmark components -- the leave-one-out gains \code{gain.Y} and \code{gain.D}, the alignment \code{rho}, and the bias contribution \code{delta} -- each with a standard error derived from its influence function and combined across cross-fitting repetitions. \code{gain.Y}/\code{gain.D} are not floored at 0 (see \code{\link{dml_benchmark}}), so a small negative combined value is possible and should be read as "statistically indistinguishable from zero," not as an error.
 }
 \description{
 Print and summary methods for benchmark results.

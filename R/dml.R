@@ -10,7 +10,7 @@
 ##' @param groups a \code{\link{factor}} or \code{\link{numeric}} vector indicating group membership. Groups must be a deterministic function of \code{x}.
 ##' @param cf.folds number of cross-fitting folds. Default is \code{5}.
 ##' @param cf.reps number of cross-fitting repetitions. Default is \code{1}.
-##' @param cf.seed optional integer. A random seed for reproducibility of fold assignments.
+##' @param cf.seed optional integer. A random seed for reproducibility of fold assignments. If left \code{NULL} (the default), one is generated automatically and stored in the returned object's \code{call} (so the fit is still fully reproducible from it) -- this also means a \code{\link{dml_benchmark}} leave-one-covariate-out refit, which is built by re-evaluating that same call, automatically shares the same cross-fitting fold partition as the original fit, rather than drawing an independent one.
 ##' @param ps.trim trims propensity scores lower than \code{ps.trim} and greater than \code{1-ps.trim}, in order to obtain more stable estimates. Alternatively, a named list with elements \code{lower} and \code{upper} specifying the lower and upper bounds for trimming. This is only relevant for the case of a binary treatment and when \code{model = "npm"}.
 ##' @param reg details of the machine learning method to be used for estimating the nuisance parameters (e.g, regression functions of the treatment and the outcome). Currently, this should be specified using the same arguments as \code{caret}'s \code{\link[caret]{train}} function. The default is random forest using \code{ranger}. The default method is fast and usually works well for many applications.
 ##' @param yreg same as \code{reg}, but specifies arguments for the outcome regression alone. Default is the same value of \code{reg}. Alternatively, a named list with elements \code{yreg0} and \code{yreg1} specifying separate methods for each.
@@ -161,6 +161,18 @@ dml <- function(y, d, x,
   out <- list()
   out$data <- list(y = y, d = d, x = x)
   out$call <-   match.call()
+
+  # Resolve cf.seed to a concrete value now (even if the user left it NULL),
+  # and stamp it into the stored call. This makes every fit fully
+  # reproducible from out$call alone, and -- more importantly for
+  # dml_benchmark() -- means that a leave-one-covariate-out refit built by
+  # re-evaluating out$call (with only `x` swapped) automatically inherits
+  # the *same* cf.seed, and therefore the same cross-fitting fold partition,
+  # as the original fit. Without this, the refit would draw an independent
+  # random partition, adding avoidable noise to the "with vs. without"
+  # comparison that benchmarking relies on.
+  if (is.null(cf.seed)) cf.seed <- sample.int(1e6, 1)
+  out$call$cf.seed <- cf.seed
 
   if (y.class) {
     y <- factor(y, levels = c(0,1), labels = c("zero", "one"))

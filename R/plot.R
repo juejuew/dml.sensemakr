@@ -358,6 +358,21 @@ ovb_contour_plot.dml <- function(model,
   se.theta.s <- extract_estimate(results, "se.theta.s")
   se.S2 <- extract_estimate(results, "se.S2")
   cov.theta.S2 <- extract_estimate(results, "cov.theta.S2")
+
+  # S2 (= sigma2.s * nu2.s) does not depend on cf.y/cf.d/rho2, so if any
+  # cross-fitting repetition has a negative value here, sqrt(S2) is NaN at
+  # every one of the (grid.number + 1)^2 grid points evaluated below, each
+  # silently emitting its own generic "NaNs produced" warning. Warn once,
+  # clearly, instead of letting that flood out of the grid loop -- see the
+  # equivalent, single-call check in bounds()/prep_bounds().
+  if (any(S2 < 0)) {
+    warning(sprintf(
+      "Unable to compute bounds for %d of %d cross-fitting repetition(s) because nu^2 is negative,
+            this is an indication of a very poor fitting of the treatment model.
+            Consider choosing a different learner for the treatment.",
+      sum(S2 < 0), length(S2)))
+  }
+
   x_grid <- seq(0, lim.x, by = lim.x/grid.number)
   y_grid <- seq(0, lim.y,  by = lim.y/grid.number)
   vec_bounds <- Vectorize(confidence_bounds.numeric, vectorize.args = c("cf.y", "cf.d"))
@@ -373,7 +388,7 @@ ovb_contour_plot.dml <- function(model,
                cf.d = x,
                cf.y = y)[which.bound, ]
   }
-  z_grid <- outer(X = x_grid, Y = y_grid, FUN = f)
+  z_grid <- suppressWarnings(outer(X = x_grid, Y = y_grid, FUN = f))
 
   contour_plot(grid_values.x = x_grid,
                grid_values.y = y_grid,

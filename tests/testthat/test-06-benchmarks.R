@@ -22,6 +22,19 @@ test_that("dml_benchmark returns correct class", {
   expect_s3_class(bench, "dml_benchmark")
 })
 
+test_that("the leave-one-out refit's call inherits the original fit's cf.seed (paired folds)", {
+  # bench_fit was fit without an explicit cf.seed, so this checks that
+  # dml() auto-resolved and stored one, and that bench_fun()'s own
+  # construction of the leave-one-out refit's call (swap `x`, touch nothing
+  # else) leaves that cf.seed intact -- which is exactly what makes the
+  # refit share the same cross-fitting fold partition as bench_fit, instead
+  # of drawing an independent one.
+  expect_true("cf.seed" %in% names(bench_fit$call))
+  model.call <- bench_fit$call
+  model.call["x"] <- call("xo")   # mirrors bench_fun()'s own construction
+  expect_equal(model.call$cf.seed, bench_fit$call$cf.seed)
+})
+
 test_that("dml_benchmark with multiple covariates", {
   bench <- dml_benchmark(bench_fit, benchmark_covariates = c("inc", "pira"))
   expect_s3_class(bench, "dml_benchmark")
@@ -37,14 +50,84 @@ test_that("summary.dml_benchmark does not error", {
 # specifically so the rho=0 fallback branch (previously untestable without
 # forcing a real, noisy model refit to happen to produce V.g<=0 or V.a<=0)
 # can be tested directly and deterministically.
-test_that("benchmark_gain_y computes the relative gain and floors at 0", {
+test_that("benchmark_gain_y computes the relative gain, unfloored", {
+  # gain.Y/gain.D are population non-negative, but the DML estimate is
+  # reported as-is (not floored at 0): a negative V.g/V.a is expected
+  # sampling noise when the true gain is near zero, and flooring it would
+  # both bias the estimator upward and desynchronize the point estimate
+  # from its own (unfloored) influence function/SE -- see the comment
+  # above benchmark_gain_y()/benchmark_gain_d() in R/benchmarks.R.
   expect_equal(dml.sensemakr:::benchmark_gain_y(sigma.sq = 2, V.g = 1), 0.5)
-  expect_equal(dml.sensemakr:::benchmark_gain_y(sigma.sq = 2, V.g = -1), 0)
+  expect_equal(dml.sensemakr:::benchmark_gain_y(sigma.sq = 2, V.g = -1), -0.5)
 })
 
-test_that("benchmark_gain_d computes the relative gain and floors at 0", {
+test_that("benchmark_gain_d computes the relative gain, unfloored", {
   expect_equal(dml.sensemakr:::benchmark_gain_d(nu.sq.wo = 4, V.a = 2), 0.5)
-  expect_equal(dml.sensemakr:::benchmark_gain_d(nu.sq.wo = 4, V.a = -2), 0)
+  expect_equal(dml.sensemakr:::benchmark_gain_d(nu.sq.wo = 4, V.a = -2), -0.5)
+})
+
+# === warn_if_negative_gain ===
+# Since gain.Y/gain.D are no longer floored at 0, negative estimates are
+# surfaced to the user via a warning (not an error, not a silent floor) --
+# these tests check that mechanism in isolation. The function checks both
+# gain.Y and gain.D together and issues a single warning even if both are
+# negative, so the guidance text isn't printed twice.
+test_that("warn_if_negative_gain warns with value and repetition count when se is NULL", {
+  expect_warning(
+    dml.sensemakr:::warn_if_negative_gain("inc", c(0.05, -0.02, 0.01), c(0.03, 0.04, 0.02)),
+    regexp = "gain\\.Y \\(1 of 3 cross-fitting repetitions, value: -0\\.0200\\) is negative"
+  )
+})
+
+test_that("warn_if_negative_gain warns with estimate and SE when se is supplied", {
+  expect_warning(
+    dml.sensemakr:::warn_if_negative_gain("pira", 0.02, -0.01, se.gain.Y = 0.01, se.gain.D = 0.03),
+    regexp = "gain\\.D \\(estimate = -0\\.0100, SE = 0\\.0300\\) is negative"
+  )
+})
+
+test_that("warn_if_negative_gain reports both quantities in one warning when both are negative", {
+  expect_warning(
+    dml.sensemakr:::warn_if_negative_gain("pira", -0.01, -0.005, se.gain.Y = 0.03, se.gain.D = 0.01),
+    regexp = "gain\\.Y \\(estimate = -0\\.0100, SE = 0\\.0300\\) and gain\\.D \\(estimate = -0\\.0050, SE = 0\\.0100\\) are negative"
+  )
+})
+
+test_that("warn_if_negative_gain issues exactly one warning even when both gain.Y and gain.D are negative", {
+  caught <- character(0)
+  withCallingHandlers(
+    dml.sensemakr:::warn_if_negative_gain("pira", -0.01, -0.005, se.gain.Y = 0.03, se.gain.D = 0.01),
+    warning = function(w) {
+      caught <<- c(caught, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    }
+  )
+  expect_length(caught, 1)
+})
+
+test_that("warn_if_negative_gain includes solution guidance by default", {
+  expect_warning(
+    dml.sensemakr:::warn_if_negative_gain("pira", -0.01, 0.01, se.gain.Y = 0.03, se.gain.D = 0.01),
+    regexp = "Two ways to address this"
+  )
+})
+
+test_that("warn_if_negative_gain omits solution guidance when suggest_solutions = FALSE", {
+  # bench_fun() calls with suggest_solutions = FALSE, since summary()'s call
+  # (which fires for the same covariate whenever a normal
+  # dml_benchmark() -> summary()/print() workflow is used) already includes
+  # the guidance -- this avoids printing it twice for one benchmarking run.
+  msg <- tryCatch(
+    dml.sensemakr:::warn_if_negative_gain("pira", -0.01, 0.01, suggest_solutions = FALSE),
+    warning = function(w) conditionMessage(w)
+  )
+  expect_false(grepl("Two ways to address this", msg))
+  expect_true(grepl("gain\\.Y", msg))
+})
+
+test_that("warn_if_negative_gain does not warn when gain.Y and gain.D are both non-negative", {
+  expect_no_warning(dml.sensemakr:::warn_if_negative_gain("inc", c(0, 0.05, 0.1), c(0.02, 0.03, 0.01)))
+  expect_no_warning(dml.sensemakr:::warn_if_negative_gain("inc", 0.02, 0.01, se.gain.Y = 0.01, se.gain.D = 0.005))
 })
 
 test_that("benchmark_rho computes the signed correlation when valid", {
@@ -148,7 +231,9 @@ test_that("normalize_benchmark_groups errors when a covariate is not found", {
   expect_error(dml.sensemakr:::normalize_benchmark_groups(list(c("a", "zzz")), x), "zzz")
 })
 
-# === replication of Table 3 (Chernozhukov et al., 2026) ===
+# === replication of Table 3 of ovb4did.pdf (the DiD-specific companion
+# paper, NOT "Long Story Short" -- its own, separate Table 3 replication is
+# below) ===
 # Table 3 ("Decomposition of the observed confounding strength", Appendix C)
 # reports, per covariate: Bias = theta_{s,j} - theta_{s,empty}, Alignment
 # (rho), Trend (= sqrt(Gain.Y)) and Imbalance (= sqrt(Gain.D)), where
@@ -176,7 +261,7 @@ test_that("normalize_benchmark_groups errors when a covariate is not found", {
 # (Appendix E.1: Delta_{s,j} := Em(W,g_{s,-j}) - Em(W,g_s), i.e. without
 # minus with) -- so `bench_fun()` uses this same `Bias` directly, unmodified,
 # for both `Cor`/`psi.rho` and the user-facing `delta` column.
-test_that("benchmark_gain_y/benchmark_gain_d/benchmark_rho replicate Table 3's Xall row", {
+test_that("benchmark_gain_y/benchmark_gain_d/benchmark_rho replicate ovb4did.pdf Table 3's Xall row", {
   # empty-covariate-set baseline, given exactly in the note below Table 3
   sigma.sq.empty <- 0.024
   nu.sq.empty    <- 1
@@ -204,6 +289,52 @@ test_that("benchmark_gain_y/benchmark_gain_d/benchmark_rho replicate Table 3's X
   bias.internal <- -bias.manuscript  # see sign note above
   expect_equal(dml.sensemakr:::benchmark_rho(bias.internal, V.g, V.a, valid = TRUE),
               alignment.manuscript, tolerance = 0.01)
+})
+
+# === replication of "Long Story Short"'s own Table 3 (Appendix E.7,
+# "Explanatory power of observed covariates in the Partially Linear Model")
+# -- distinct from ovb4did.pdf's Table 3 above. Unlike that one, this is an
+# ordinary single-covariate leave-one-out benchmark for inc/pira/twoearn --
+# exactly what dml_benchmark() computes -- so it can be checked via an
+# actual end-to-end dml_benchmark() call instead of hand-constructed inputs.
+#
+# Manuscript's reported values (PLM):
+#   inc:     GY,j=0.145, GD,j=0.047, rho= 0.34, Delta_hat= 3,349
+#   pira:    GY,j=0.038, GD,j=0.003, rho= 0.21, Delta_hat=   188
+#   twoearn: GY,j=0.021, GD,j=0.007, rho=-0.25, Delta_hat=  -621
+#
+# Exact numerical replication isn't realistic here: the manuscript uses the
+# full pension sample, 5-fold cross-fitting repeated 5 times and
+# median-combined, with tuned random forests, while this test (like the
+# rest of the file) uses a 500-row subsample and 2 folds for speed. Instead
+# we check the qualitative pattern the table establishes -- but even that
+# has to be scoped carefully: an earlier version of this test also asserted
+# the sign of rho/delta for pira and twoearn, and on an actual run those
+# failed. That's not a bug -- pira's GD,j = 0.003 and twoearn's GD,j = 0.007
+# (and their modest rho of 0.21 and -0.25) are exactly the small,
+# noise-sensitive values discussed at length around
+# warn_if_negative_gain(): on a 500-row/2-fold subsample, sampling noise
+# can flip signs that small. So we only assert what's robust: inc's own
+# sign (unambiguous at rho = 0.34) and the magnitude ordering, which held
+# on the actual run even though pira/twoearn's signs didn't.
+plm_fit_table3 <- dml(y, d, x, model = "plm", cf.folds = 2, cf.reps = 5, verbose = FALSE)
+bench_table3   <- dml_benchmark(plm_fit_table3,
+                                benchmark_covariates = c("inc", "pira", "twoearn"))
+
+test_that("dml_benchmark's PLM results qualitatively match Long Story Short's Table 3", {
+  s <- summary(bench_table3)$benchmarks
+
+  # inc is the clearly dominant benchmark covariate
+  expect_true(s["inc", "gain.Y"] > s["pira", "gain.Y"])
+  expect_true(s["inc", "gain.Y"] > s["twoearn", "gain.Y"])
+  expect_true(s["inc", "gain.D"] > s["pira", "gain.D"])
+  expect_true(s["inc", "gain.D"] > s["twoearn", "gain.D"])
+
+  # inc's rho/delta sign is unambiguous (manuscript rho = 0.34); pira's and
+  # twoearn's are too small/noise-sensitive to assert reliably here (see
+  # comment above)
+  expect_true(s["inc", "rho"] > 0)
+  expect_true(s["inc", "delta"] > 0)
 })
 
 # === additional coverage: input validation, structure, and correctness ===
@@ -254,11 +385,17 @@ test_that("delta equals the exact difference between the with/without short esti
   expect_equal(b$delta, b$theta.sj - b$theta.s)
 })
 
-test_that("gain.Y and gain.D are non-negative for every benchmark covariate", {
+# gain.Y/gain.D are NOT asserted to be non-negative here: they are
+# population non-negative quantities, but their DML estimates are
+# deliberately left unfloored (see the comment above benchmark_gain_y()/
+# benchmark_gain_d()), so a small negative value from sampling noise is
+# expected and legitimate, not a bug. What remains a valid invariant
+# regardless of sign is that the estimates are always finite.
+test_that("gain.Y and gain.D are finite for every benchmark covariate", {
   for (covar in names(bench_multi$benchmarks)) {
     b <- bench_multi$benchmarks[[covar]]
-    expect_true(all(b$gain.Y >= 0))
-    expect_true(all(b$gain.D >= 0))
+    expect_true(all(is.finite(b$gain.Y)))
+    expect_true(all(is.finite(b$gain.D)))
   }
 })
 

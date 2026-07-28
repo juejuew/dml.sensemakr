@@ -8,7 +8,7 @@
 \alias{confidence_bounds.dml.bounds}
 \title{Bounds on the omitted variable bias for causal machine learning}
 \usage{
-dml_bounds(model, cf.y, cf.d, rho2 = 1)
+dml_bounds(model, cf.y, cf.d, rho2 = 1, fixed = NULL, only = NULL)
 
 confidence_bounds(...)
 
@@ -33,6 +33,8 @@ confidence_bounds(...)
   rho2 = 1,
   level = 0.95,
   combine.method = "median",
+  fixed = NULL,
+  only = NULL,
   ...
 )
 
@@ -55,6 +57,14 @@ confidence_bounds(...)
 \item{cf.d}{how much variation latent variables create in the Riesz Representer of the target parameters. Must be a number between (0, 1). When the target of interest is the ATE in a partially linear model, this corresponds to the partial R2 of omitted variables with the treatment. When the target of interest is the ATE in a non-parametric model with a binary treatment, this corresponds to the gains in precision (i.e, 1/variance) when predicting who is assigned to treatment.}
 
 \item{rho2}{degree of adversity. Default is \code{rho=1}, which assumes the maximum degree of adversity of confounding.}
+
+\item{only}{restricts computation to a single main slot and/or a single group,
+instead of every slot/group in \code{model$results}. Must be a list with
+elements \code{main} (a slot name, e.g. \code{"all"}, or \code{NULL} to skip
+all main slots) and \code{groups} (a group name, or \code{NULL} to skip all
+groups). Default \code{NULL} computes everything, exactly as before. Intended
+for internal use by \code{\link{robustness_value}}/\code{\link{extreme_robustness_value}},
+whose \code{optim()} search only ever needs one row's result per evaluation.}
 
 \item{...}{arguments passed to other methods.}
 
