@@ -353,6 +353,19 @@ ovb_contour_plot.dml <- function(model,
     results <- model$results$groups[[group.number]]
   }
 
+  if (is.null(results)) {
+    if (!group) {
+      stop("No 'main' (", switch(parameter, all = "ate", treat = "att", untr = "atu"),
+           ") target found on this model -- results$main is NULL (e.g. a ",
+           "did::att_gt() adapter object, which only has group-level (g,t) ",
+           "estimates, not a single main target). Pass group = TRUE and ",
+           "group.number = k to plot a specific group instead.")
+    } else {
+      stop("No group ", group.number, " found on this model (results$groups has ",
+           length(model$results$groups), " group(s)).")
+    }
+  }
+
   theta.s <- extract_estimate(results, "theta.s")
   S2 <- extract_estimate(results, "S2")
   se.theta.s <- extract_estimate(results, "se.theta.s")

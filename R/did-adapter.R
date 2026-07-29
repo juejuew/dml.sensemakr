@@ -45,17 +45,17 @@
 #    users know that cell's SE may be modestly understated.
 #
 # sensemakr() on did_to_dml()'s output (results$main = NULL, groups-only):
-#  - sensemakr(), print(<dml.sensemakr>), robustness_value(),
-#    extreme_robustness_value(), confidence_bounds(), and
-#    dml_benchmark(model, only = "g<g>_t<t>") all work as expected.
-#  - summary(<dml.sensemakr>) does NOT work: summary.dml()/print.summary_dml()
-#    (R/print-summary-dml.R) assume a real cross-fitted dml() fit (object$fits,
-#    object$data, info$cf.folds/yreg/dreg), none of which this adapter
-#    populates. Use print() instead, which reports the same RV/RVa and
-#    confidence-bound tables per (g,t) cell.
-#  - plot(<dml.sensemakr>) with default args errors (it needs a "main" target
-#    to plot, which this adapter doesn't have). Pass group = TRUE,
-#    group.number = k to plot a specific (g,t) cell.
+#  - sensemakr(), print(<dml.sensemakr>), summary(<dml.sensemakr>),
+#    robustness_value(), extreme_robustness_value(), and confidence_bounds()
+#    all work as expected. summary.dml()/print.summary_dml()
+#    (R/print-summary-dml.R) now detect the absence of object$fits (no real
+#    cross-fitting happened) and skip the ML-method/tuning/R^2 reporting,
+#    showing only the group (g,t) ATE table.
+#  - plot(<dml.sensemakr>) with default args errors clearly, pointing at
+#    group = TRUE, group.number = k (it needs a "main" target to plot by
+#    default, which this adapter doesn't have -- there's no single natural
+#    default across a grid of (g,t) cells). plot(group = TRUE,
+#    group.number = k) works and plots that specific cell.
 #  - dml_benchmark()/benchmark_covariates are NOT available at all for this
 #    adapter's output, at any level: bench_fun() (R/benchmarks.R) reads
 #    exclusively from model$results$main, which this adapter always leaves

@@ -305,3 +305,42 @@ test_that("did_to_dml() runs end-to-end with mixed continuous + factor covariate
   xrv <- extreme_robustness_value(model)
   expect_true(all(xrv <= rv + 1e-6))
 })
+
+# sensemakr()/print()/summary()/plot() on did_to_dml()'s groups-only output
+# (results$main = NULL). See R/did-adapter.R's header for what is and isn't
+# expected to work here.
+test_that("sensemakr() and print() work on did_to_dml() output", {
+  model <- dml.sensemakr:::did_to_dml(setup_did$mp)
+  sens <- suppressWarnings(sensemakr(model, cf.y = 0.03, cf.d = 0.04))
+  expect_s3_class(sens, "dml.sensemakr")
+  expect_equal(nrow(sens$sensitivity_stats), length(setup_did$mp$group))
+  expect_equal(nrow(sens$conf.bounds), length(setup_did$mp$group))
+  expect_null(sens$bench.bounds)
+  expect_output(print(sens), "Robustness Values")
+})
+
+test_that("summary() works on did_to_dml() output, skipping cross-fitting-specific reporting", {
+  model <- dml.sensemakr:::did_to_dml(setup_did$mp)
+  sens <- suppressWarnings(sensemakr(model, cf.y = 0.03, cf.d = 0.04))
+  expect_output(summary(sens), "Group Average Treatment Effect")
+  expect_no_error(suppressWarnings(summary(sens)))
+  # no cross-fitting info exists for a did-adapter object -- these sections
+  # must be silently skipped rather than erroring on missing object$fits.
+  expect_false(any(grepl("Cross-Fitting|ML Method", capture.output(suppressWarnings(summary(sens))))))
+})
+
+test_that("plot() on did_to_dml() output errors clearly without group=TRUE, works with it", {
+  model <- dml.sensemakr:::did_to_dml(setup_did$mp)
+  sens <- suppressWarnings(sensemakr(model, cf.y = 0.03, cf.d = 0.04))
+  expect_error(plot(sens), "group = TRUE")
+  expect_no_error(plot(sens, group = TRUE, group.number = 1))
+})
+
+test_that("sensemakr(benchmark_covariates=) warns rather than silently skipping for did output", {
+  model <- dml.sensemakr:::did_to_dml(setup_did$mp)
+  expect_warning(
+    sens <- sensemakr(model, cf.y = 0.03, cf.d = 0.04, benchmark_covariates = "lpop"),
+    "benchmarking is not available"
+  )
+  expect_null(sens$bench.bounds)
+})

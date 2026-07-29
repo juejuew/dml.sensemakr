@@ -45,10 +45,13 @@ summary.dml <- function(object, combine.method = "median", ...){
   out$info <- object$info
   out$combine.method <- combine.method
 
-  # goodness of fits
-  comb_fun <- get(combine.method)
-  out$r2y <- comb_fun(sapply(object$fits, function(x) r2(x$preds$yhat, object$data$y)))
-  out$r2d <- comb_fun(sapply(object$fits, function(x) r2(x$preds$dhat, object$data$d)))
+  # goodness of fits (only available for a real cross-fitted dml() fit --
+  # e.g. not for a did::att_gt() adapter object, which has no object$fits)
+  if (!is.null(object$fits)) {
+    comb_fun <- get(combine.method)
+    out$r2y <- comb_fun(sapply(object$fits, function(x) r2(x$preds$yhat, object$data$y)))
+    out$r2d <- comb_fun(sapply(object$fits, function(x) r2(x$preds$dhat, object$data$d)))
+  }
 
   # main coefs
   # main <- rbind(object$coefs$main[combine.method,])
@@ -163,18 +166,32 @@ print.summary_dml <- function(x, digits = max(3L, getOption("digits") - 3L), int
   cat("\n")
   cat("Debiased Machine Learning\n")
   cat("\n")
-  cat("", "Model:", ifelse(x$info$model == "plm", "Partially Linear", "Nonparametric"), "\n")
-  cat("", "Cross-Fitting:",x$info$cf.folds, "folds,", x$info$cf.reps, "reps", "\n")
-  cat("", "ML Method:",
-      "outcome", paste0("(yreg0:", attr(x$info$yreg$yreg0$method, "name"),
-                        ", yreg1:", attr(x$info$yreg$yreg1$method, "name"), ", R2 = ", round(x$r2y*100,3), "%),"),
-      "treatment", paste0("(", attr(x$info$dreg$method,"name"), ", R2 = ", round(x$r2d*100,3), "%)\n"))
-  cat("", "Tuning:", ifelse(x$info$dirty.tuning, "dirty", "clean"), "\n")
+
+  # cross-fitting/ML-method details only exist for a real cross-fitted dml()
+  # fit -- not for e.g. a did::att_gt() adapter object (info$model == "did"),
+  # which has no fits/ML nuisance models in this sense.
+  has.cf.info <- !is.null(x$r2y)
+  model.label <- switch(x$info$model,
+                         plm = "Partially Linear",
+                         npm = "Nonparametric",
+                         did = "Difference-in-Differences (did::att_gt() adapter)",
+                         x$info$model)
+  cat("", "Model:", model.label, "\n")
+  if (has.cf.info) {
+    cat("", "Cross-Fitting:",x$info$cf.folds, "folds,", x$info$cf.reps, "reps", "\n")
+    cat("", "ML Method:",
+        "outcome", paste0("(yreg0:", attr(x$info$yreg$yreg0$method, "name"),
+                          ", yreg1:", attr(x$info$yreg$yreg1$method, "name"), ", R2 = ", round(x$r2y*100,3), "%),"),
+        "treatment", paste0("(", attr(x$info$dreg$method,"name"), ", R2 = ", round(x$r2d*100,3), "%)\n"))
+    cat("", "Tuning:", ifelse(x$info$dirty.tuning, "dirty", "clean"), "\n")
+  }
 
   cat("\n")
 
-  cat("Average Treatment Effect:", "\n\n")
-  print(x$main, digits = digits)
+  if (!is.null(x$main)) {
+    cat("Average Treatment Effect:", "\n\n")
+    print(x$main, digits = digits)
+  }
 
   no.groups <- is.null(x$groups)
   if (!no.groups) {
@@ -185,7 +202,7 @@ print.summary_dml <- function(x, digits = max(3L, getOption("digits") - 3L), int
   }
   cat("Note: DML estimates combined using the", x$combine.method, "method.")
 
-  if (interpret) {
+  if (interpret && has.cf.info) {
     yreg.method <- x$info$yreg$method$label
     yreg.lib    <- x$info$yreg$method$library[[1]]
     dreg.method <- x$info$dreg$method$label
