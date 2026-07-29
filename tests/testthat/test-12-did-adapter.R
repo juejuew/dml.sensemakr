@@ -78,3 +78,68 @@ test_that("did_cell_short_results() output feeds cleanly into prep_bounds()/boun
   expect_true(all(c(b$estimates$se.theta.s, b$estimates$se.bias.bound,
                     b$estimates$se.theta.m, b$estimates$se.theta.p) > 0))
 })
+
+# === Full (g,t) grid: did_to_dml() ===
+# Every cell goes into results$groups (results$main/info$target left
+# empty) -- verified against coef.dml()/se.dml()/confint.dml()/
+# row_only_list()/dml_bounds()/robustness_value()/
+# extreme_robustness_value() before this was written, and also uncovered a
+# real, previously-untriggered bug in coef.dml()/se.dml() (sapply(NULL, f)
+# silently coercing the whole coefficient vector into a list) fixed
+# alongside this feature -- see R/print-summary-dml.R.
+test_that("did_to_dml() builds a group per (group,t) cell, matching att_gt()'s own att exactly", {
+  model <- dml.sensemakr:::did_to_dml(setup_did$mp)
+  expect_equal(length(model$results$groups), length(setup_did$mp$group))
+  expect_null(model$results$main)
+
+  cf <- coef(model)
+  expected <- setNames(setup_did$mp$att,
+                       paste0("gate.g", setup_did$mp$group, "_t", setup_did$mp$t))
+  expect_equal(unname(cf[names(expected)]), unname(expected))
+})
+
+test_that("did_to_dml() runs cleanly (no warnings) on a grid with no failed att_gt() cells", {
+  expect_false(any(is.na(setup_did$mp$att)))
+  expect_no_warning(dml.sensemakr:::did_to_dml(setup_did$mp))
+})
+
+test_that("did_to_dml()'s confint has one row per cell and matches coef.dml() length", {
+  model <- dml.sensemakr:::did_to_dml(setup_did$mp)
+  ci <- confint(model)
+  expect_equal(nrow(ci), length(coef(model)))
+})
+
+test_that("robustness_value()/extreme_robustness_value() run across the full grid, XRV <= RV everywhere", {
+  model <- dml.sensemakr:::did_to_dml(setup_did$mp)
+  rv  <- robustness_value(model, theta = 0, alpha = 0.05)
+  xrv <- extreme_robustness_value(model, theta = 0, alpha = 0.05)
+  expect_length(rv, length(model$results$groups))
+  expect_length(xrv, length(model$results$groups))
+  expect_true(all(rv >= 0 & rv <= 1))
+  expect_true(all(xrv >= 0 & xrv <= 1))
+  expect_true(all(xrv <= rv + 1e-6))
+})
+
+test_that("did_to_dml()'s dml_bounds(only=) for one group matches the single-cell adapter directly", {
+  model <- dml.sensemakr:::did_to_dml(setup_did$mp)
+  target_slot <- "g2004_t2006"
+
+  full <- dml_bounds(model, cf.y = 0.03, cf.d = 0.04, rho2 = 1)
+  restricted <- dml_bounds(model, cf.y = 0.03, cf.d = 0.04, rho2 = 1,
+                           only = list(main = NULL, groups = target_slot))
+  expect_equal(restricted$results$groups[[target_slot]], full$results$groups[[target_slot]])
+
+  sr_direct <- dml.sensemakr:::did_cell_short_results(setup_did$mp, group = 2004, t = 2006)
+  expect_equal(sr_direct$estimates$theta.s,
+              model$results$groups[[target_slot]][[1]]$estimates$theta.s)
+})
+
+test_that("did_to_dml() warns clearly for control_group = 'notyettreated' (unverified path)", {
+  data("mpdta", package = "did")
+  mp_nyt <- att_gt(yname = "lemp", tname = "year", idname = "countyreal",
+                   gname = "first.treat", xformla = ~lpop, data = mpdta,
+                   est_method = "dr", compute_inffunc = TRUE, bstrap = FALSE,
+                   print_details = FALSE, control_group = "notyettreated",
+                   base_period = "varying")
+  expect_warning(dml.sensemakr:::did_to_dml(mp_nyt), "not been independently verified")
+})

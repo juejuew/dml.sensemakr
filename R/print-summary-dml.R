@@ -78,8 +78,11 @@ summary.dml <- function(object, combine.method = "median", ...){
 ##' @description  The \code{coef} function extracts the coefficients.
 ##' @export
 coef.dml <- function(object, combine.method = "median", ...){
-  ate <- sapply(object$coefs$main, function(x) x[combine.method, "estimate"])
-    #object$coefs$main[combine.method, "estimate"]
+  if (!is.null(object$coefs$main)) {
+    ate <- sapply(object$coefs$main, function(x) x[combine.method, "estimate"])
+  } else {
+    ate <- NULL
+  }
   if (!is.null(object$coefs$groups)) {
     gate <- sapply(object$coefs$groups, function(x) x[combine.method, "estimate"])
   } else{
@@ -98,8 +101,11 @@ se <- function(object, ...){
 ##' @description  The \code{se} function extracts the standard errors.
 ##' @export
 se.dml <- function(object, combine.method = "median", ...){
-  ate <- sapply(object$coefs$main, function(x) x[combine.method, "se"])
-    #object$coefs$main[combine.method, "se"]
+  if (!is.null(object$coefs$main)) {
+    ate <- sapply(object$coefs$main, function(x) x[combine.method, "se"])
+  } else {
+    ate <- NULL
+  }
   if(!is.null(object$coefs$groups)){
     gate <- sapply(object$coefs$groups, function(x) x[combine.method, "se"])
   } else{

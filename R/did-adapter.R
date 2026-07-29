@@ -288,3 +288,72 @@ did_cell_short_results <- function(mp, group, t) {
                psi.S2 = psi.S2)
   )
 }
+
+# Slot name for one (group, t) cell, e.g. "g2004_t2006".
+did_slot_name <- function(group, t) paste0("g", group, "_t", t)
+
+# Loops over every (group, t) cell of a did::att_gt() "MP" object and
+# assembles them into a single pseudo-"dml" object, ready for
+# confidence_bounds()/robustness_value()/extreme_robustness_value().
+#
+# Every cell goes into results$groups/coefs$groups; results$main/
+# coefs$main are left NULL, and info$target is left NULL with info$model
+# set to "did" (anything other than "plm"). This was verified (not just
+# assumed) to work correctly with the existing coef.dml()/se.dml()/
+# confint.dml()/row_only_list()/dml_bounds()/robustness_value()/
+# extreme_robustness_value() machinery unchanged -- see the project notes
+# for the verification, which also uncovered and fixed a real,
+# previously-untriggered bug in coef.dml()/se.dml() (sapply(NULL, f)
+# returns list(), silently coercing the whole coefficient vector into a
+# list when object$coefs$main is NULL).
+#
+# Cells where att_gt() itself returned NA (overlap/rank-condition
+# failures, or no pre-treatment period available for that group) are
+# skipped with a warning, not silently dropped. Cells where this adapter's
+# own nuisance refit fails (e.g. a singular design matrix in a very small
+# subgroup) are also skipped with a warning, rather than aborting the
+# whole grid.
+did_to_dml <- function(mp) {
+  validate_did_scope(mp)
+
+  if (identical(mp$DIDparams$control_group, "notyettreated")) {
+    warning("control_group = \"notyettreated\" is implemented from did's own ",
+            "source logic but has not been independently verified the same way ",
+            "as \"nevertreated\" (see R/did-adapter.R). Treat results with extra caution.",
+            call. = FALSE)
+  }
+
+  groups_results <- list()
+  for (k in seq_along(mp$group)) {
+    group <- mp$group[k]; t <- mp$t[k]
+    slot <- did_slot_name(group, t)
+
+    if (is.na(mp$att[k])) {
+      warning("Skipping (group, t) = (", group, ", ", t, "): att_gt() itself ",
+              "returned NA for this cell (e.g. an overlap or rank-condition failure).",
+              call. = FALSE)
+      next
+    }
+
+    sr <- tryCatch(did_cell_short_results(mp, group, t), error = function(e) {
+      warning("Skipping (group, t) = (", group, ", ", t, "): ", conditionMessage(e),
+              call. = FALSE)
+      NULL
+    })
+    if (is.null(sr)) next
+
+    groups_results[[slot]] <- list(sr)
+  }
+
+  if (length(groups_results) == 0L) {
+    stop("No (group, t) cells could be computed.")
+  }
+
+  model <- list(
+    info = list(model = "did", target = NULL),
+    results = list(main = NULL, groups = groups_results),
+    coefs = list(main = NULL, groups = lapply(groups_results, combine.cross.fits))
+  )
+  class(model) <- "dml"
+  model
+}
