@@ -35,7 +35,9 @@ Suggests:
     hdm,
     DoubleML,
     grf,
-    mlr3
+    mlr3,
+    did,
+    DRDID
 Config/testthat/edition: 3
 VignetteBuilder: knitr
 Config/roxygen2/version: 8.0.0
