@@ -143,3 +143,66 @@ test_that("did_to_dml() warns clearly for control_group = 'notyettreated' (unver
                    base_period = "varying")
   expect_warning(dml.sensemakr:::did_to_dml(mp_nyt), "not been independently verified")
 })
+
+# === Cross-checks for the three previously-unverified settings, following
+# the same "reconstruct from DIDparams$data, call DRDID::drdid_panel()
+# directly, compare to att_gt()'s own att/se" method that validated
+# "nevertreated"/"varying" originally. ===
+
+test_that("resolve_did_control_ids() for 'notyettreated' reproduces att_gt() exactly", {
+  data("mpdta", package = "did")
+  mp_nyt <- att_gt(yname = "lemp", tname = "year", idname = "countyreal",
+                   gname = "first.treat", xformla = ~lpop, data = mpdta,
+                   est_method = "dr", compute_inffunc = TRUE, bstrap = FALSE,
+                   print_details = FALSE, control_group = "notyettreated",
+                   base_period = "varying")
+  sr <- dml.sensemakr:::did_cell_short_results(mp_nyt, group = 2004, t = 2004)
+  k <- which(mp_nyt$group == 2004 & mp_nyt$t == 2004)
+  expect_equal(sr$estimates$theta.s, mp_nyt$att[k], tolerance = 1e-8)
+  expect_equal(sr$estimates$se.theta.s, mp_nyt$se[k], tolerance = 1e-8)
+})
+
+test_that("resolve_did_base_period() for 'universal', post-treatment cell, reproduces att_gt() exactly", {
+  data("mpdta", package = "did")
+  mp_uni <- att_gt(yname = "lemp", tname = "year", idname = "countyreal",
+                   gname = "first.treat", xformla = ~lpop, data = mpdta,
+                   est_method = "dr", compute_inffunc = TRUE, bstrap = FALSE,
+                   print_details = FALSE, control_group = "nevertreated",
+                   base_period = "universal")
+  sr <- dml.sensemakr:::did_cell_short_results(mp_uni, group = 2004, t = 2004)
+  k <- which(mp_uni$group == 2004 & mp_uni$t == 2004)
+  expect_equal(sr$estimates$theta.s, mp_uni$att[k], tolerance = 1e-8)
+  expect_equal(sr$estimates$se.theta.s, mp_uni$se[k], tolerance = 1e-8)
+})
+
+test_that("did_to_dml() skips base_period = 'universal's trivial self-comparison cells (se = NA)", {
+  data("mpdta", package = "did")
+  mp_uni <- att_gt(yname = "lemp", tname = "year", idname = "countyreal",
+                   gname = "first.treat", xformla = ~lpop, data = mpdta,
+                   est_method = "dr", compute_inffunc = TRUE, bstrap = FALSE,
+                   print_details = FALSE, control_group = "nevertreated",
+                   base_period = "universal")
+  n_na <- sum(is.na(mp_uni$se))
+  expect_true(n_na > 0)  # this fixture is expected to have such cells
+
+  expect_warning(model <- dml.sensemakr:::did_to_dml(mp_uni), "trivial self-comparison")
+  expect_equal(length(model$results$groups), length(mp_uni$group) - n_na)
+
+  rv <- robustness_value(model)
+  xrv <- extreme_robustness_value(model)
+  expect_true(all(is.finite(rv)) && all(is.finite(xrv)))
+  expect_true(all(xrv <= rv + 1e-6))
+})
+
+test_that("resolve_did_base_period() with anticipation > 0 reproduces att_gt() exactly", {
+  data("mpdta", package = "did")
+  mp_ant <- att_gt(yname = "lemp", tname = "year", idname = "countyreal",
+                   gname = "first.treat", xformla = ~lpop, data = mpdta,
+                   est_method = "dr", compute_inffunc = TRUE, bstrap = FALSE,
+                   print_details = FALSE, control_group = "nevertreated",
+                   base_period = "varying", anticipation = 1)
+  sr <- dml.sensemakr:::did_cell_short_results(mp_ant, group = 2006, t = 2007)
+  k <- which(mp_ant$group == 2006 & mp_ant$t == 2007)
+  expect_equal(sr$estimates$theta.s, mp_ant$att[k], tolerance = 1e-8)
+  expect_equal(sr$estimates$se.theta.s, mp_ant$se[k], tolerance = 1e-8)
+})

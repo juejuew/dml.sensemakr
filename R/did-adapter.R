@@ -307,12 +307,16 @@ did_slot_name <- function(group, t) paste0("g", group, "_t", t)
 # returns list(), silently coercing the whole coefficient vector into a
 # list when object$coefs$main is NULL).
 #
-# Cells where att_gt() itself returned NA (overlap/rank-condition
-# failures, or no pre-treatment period available for that group) are
-# skipped with a warning, not silently dropped. Cells where this adapter's
-# own nuisance refit fails (e.g. a singular design matrix in a very small
-# subgroup) are also skipped with a warning, rather than aborting the
-# whole grid.
+# Cells where att_gt() itself returned NA -- either because of an overlap/
+# rank-condition failure (att = NA), or because it's the trivial
+# "comparison period equals the group's own base period" cell that
+# base_period = "universal" produces for every group (att = 0 exactly, but
+# se = NA, since att_gt() special-cases it as a self-comparison and never
+# actually calls a DiD estimator for it -- verified against a real
+# att_gt() cell, see project notes) -- are skipped with a warning, not
+# silently dropped. Cells where this adapter's own nuisance refit fails
+# (e.g. a singular design matrix in a very small subgroup) are also
+# skipped with a warning, rather than aborting the whole grid.
 did_to_dml <- function(mp) {
   validate_did_scope(mp)
 
@@ -328,9 +332,11 @@ did_to_dml <- function(mp) {
     group <- mp$group[k]; t <- mp$t[k]
     slot <- did_slot_name(group, t)
 
-    if (is.na(mp$att[k])) {
+    if (is.na(mp$att[k]) || is.na(mp$se[k])) {
       warning("Skipping (group, t) = (", group, ", ", t, "): att_gt() itself ",
-              "returned NA for this cell (e.g. an overlap or rank-condition failure).",
+              "returned att = NA and/or se = NA for this cell (e.g. an overlap/",
+              "rank-condition failure, or a trivial self-comparison cell under ",
+              "base_period = \"universal\").",
               call. = FALSE)
       next
     }
