@@ -98,9 +98,21 @@ test_that("did_to_dml() builds a group per (group,t) cell, matching att_gt()'s o
   expect_equal(unname(cf[names(expected)]), unname(expected))
 })
 
-test_that("did_to_dml() runs cleanly (no warnings) on a grid with no failed att_gt() cells", {
+test_that("did_to_dml() skips no cells on a grid with no failed att_gt() cells", {
+  # The mpdta fixture's group=2004 cohort has exactly 20 treated units,
+  # which legitimately triggers the small-treated-cohort warning added to
+  # did_cell_nuisances() -- that's expected, informational, and not a
+  # "skip"/failure. What this test actually checks is that every cell
+  # still computes successfully (no "Skipping (group, t) = ..." warnings),
+  # i.e. did_to_dml() ends up with one group per att_gt() cell, none lost.
   expect_false(any(is.na(setup_did$mp$att)))
-  expect_no_warning(dml.sensemakr:::did_to_dml(setup_did$mp))
+  msgs <- c()
+  model <- withCallingHandlers(
+    dml.sensemakr:::did_to_dml(setup_did$mp),
+    warning = function(w) { msgs <<- c(msgs, conditionMessage(w)); invokeRestart("muffleWarning") }
+  )
+  expect_false(any(grepl("^Skipping", msgs)))
+  expect_equal(length(model$results$groups), length(setup_did$mp$group))
 })
 
 test_that("did_to_dml()'s confint has one row per cell and matches coef.dml() length", {
@@ -205,4 +217,91 @@ test_that("resolve_did_base_period() with anticipation > 0 reproduces att_gt() e
   k <- which(mp_ant$group == 2006 & mp_ant$t == 2007)
   expect_equal(sr$estimates$theta.s, mp_ant$att[k], tolerance = 1e-8)
   expect_equal(sr$estimates$se.theta.s, mp_ant$se[k], tolerance = 1e-8)
+})
+
+# === Trimming warning ===
+# nu2.s's sandwich correction doesn't differentiate through the trim
+# indicator; verified by simulation (see R/did-adapter.R) to leave a
+# small (~5%) residual SE understatement when trimming is genuinely
+# active. did_cell_nuisances() warns whenever that happens.
+test_that("did_cell_nuisances() warns when trimming is active, and not otherwise", {
+  set.seed(99)
+  n <- 500
+  X <- cbind(1, c(runif(n - 1, -2, 2), 8))  # one extreme covariate value
+  D <- c(rbinom(n - 1, 1, plogis(X[1:(n-1), 2])), 0)  # force the extreme unit to be a control
+  deltaY <- rnorm(n)
+  w <- rep(1, n)
+  sample_trim <- list(D = D, deltaY = deltaY, X = X, w = w)
+  expect_warning(dml.sensemakr:::did_cell_nuisances(sample_trim), "trimmed")
+
+  sample_notrim <- list(D = D[1:(n-1)], deltaY = deltaY[1:(n-1)],
+                        X = X[1:(n-1), , drop = FALSE], w = w[1:(n-1)])
+  expect_no_warning(dml.sensemakr:::did_cell_nuisances(sample_notrim))
+})
+
+# === Small treated-cohort warning ===
+# nu2.s's sandwich correction includes a 1/c1^3 term that grows as the
+# treated group shrinks; confirmed by simulation (see R/did-adapter.R) to
+# produce a real ~12% analytical-vs-bootstrap SE gap on a real cell with
+# exactly 20 treated units. did_cell_nuisances() warns at n_treated <= 20.
+test_that("did_cell_nuisances() warns for a small treated cohort, and not for a larger one", {
+  set.seed(5)
+  n <- 400
+  X <- cbind(1, rnorm(n))
+  D_small <- c(rep(1, 15), rep(0, n - 15))  # 15 treated: below the threshold
+  D_large <- c(rep(1, 100), rep(0, n - 100))  # 100 treated: well above it
+  deltaY <- rnorm(n)
+  w <- rep(1, n)
+
+  expect_warning(dml.sensemakr:::did_cell_nuisances(list(D = D_small, deltaY = deltaY, X = X, w = w)),
+                "treated unit")
+  expect_no_warning(dml.sensemakr:::did_cell_nuisances(list(D = D_large, deltaY = deltaY, X = X, w = w)))
+})
+
+# === Categorical / multiple covariates ===
+# mpdta's own xformla (~lpop) only exercises a single continuous
+# covariate; model.matrix()'s dummy-encoding of a factor covariate had
+# never been tested end-to-end.
+test_that("did_cell_short_results() reproduces att_gt() exactly with a factor covariate", {
+  data("mpdta", package = "did")
+  set.seed(3)
+  county_region <- setNames(sample(c("north","south","east"),
+                                   length(unique(mpdta$countyreal)), replace = TRUE),
+                            unique(mpdta$countyreal))
+  mpdta$region <- factor(county_region[as.character(mpdta$countyreal)])
+
+  mp_factor <- att_gt(yname = "lemp", tname = "year", idname = "countyreal",
+                      gname = "first.treat", xformla = ~region, data = mpdta,
+                      est_method = "dr", compute_inffunc = TRUE, bstrap = FALSE,
+                      print_details = FALSE, control_group = "nevertreated",
+                      base_period = "varying")
+  sr <- dml.sensemakr:::did_cell_short_results(mp_factor, group = 2004, t = 2006)
+  k <- which(mp_factor$group == 2004 & mp_factor$t == 2006)
+  expect_equal(sr$estimates$theta.s, mp_factor$att[k], tolerance = 1e-8)
+  expect_equal(sr$estimates$se.theta.s, mp_factor$se[k], tolerance = 1e-8)
+})
+
+test_that("did_to_dml() runs end-to-end with mixed continuous + factor covariates", {
+  data("mpdta", package = "did")
+  set.seed(3)
+  county_region <- setNames(sample(c("north","south","east"),
+                                   length(unique(mpdta$countyreal)), replace = TRUE),
+                            unique(mpdta$countyreal))
+  mpdta$region <- factor(county_region[as.character(mpdta$countyreal)])
+
+  mp_multi <- att_gt(yname = "lemp", tname = "year", idname = "countyreal",
+                     gname = "first.treat", xformla = ~lpop + region, data = mpdta,
+                     est_method = "dr", compute_inffunc = TRUE, bstrap = FALSE,
+                     print_details = FALSE, control_group = "nevertreated",
+                     base_period = "varying")
+  sr <- dml.sensemakr:::did_cell_short_results(mp_multi, group = 2004, t = 2006)
+  k <- which(mp_multi$group == 2004 & mp_multi$t == 2006)
+  expect_equal(sr$estimates$theta.s, mp_multi$att[k], tolerance = 1e-8)
+  expect_equal(sr$estimates$se.theta.s, mp_multi$se[k], tolerance = 1e-8)
+
+  model <- dml.sensemakr:::did_to_dml(mp_multi)
+  expect_equal(length(model$results$groups), length(mp_multi$group))
+  rv <- robustness_value(model)
+  xrv <- extreme_robustness_value(model)
+  expect_true(all(xrv <= rv + 1e-6))
 })

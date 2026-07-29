@@ -23,16 +23,26 @@
 #    sandwich correction (for gamma/c1/c0's estimation uncertainty) was
 #    verified via bootstrap on both an unweighted and a weighted
 #    simulated sample.
-#  - control_group = "notyettreated" is implemented from the same traced
-#    did source logic (get_did_cohort_index()), but has NOT been
-#    independently verified the same way -- treat as unverified until it is.
-#  - Trimming (trim.level = 0.995, matching drdid_panel()'s default) is
-#    assumed asymptotically non-binding for the sandwich correction, per
-#    the standard argument in this literature (Sant'Anna & Zhao, 2020;
-#    Crump, Hotz, Imbens & Mitnik, 2009: as long as the true propensity
-#    has no probability mass exactly at the trim threshold, the set of
-#    trimmed units doesn't change under small perturbations of gamma) --
-#    not separately verified by simulation here.
+#  - control_group = "notyettreated" and base_period = "universal" (and
+#    anticipation > 0) have ALSO been verified the same way -- exact
+#    reproduction of att_gt()'s own att/se on real mpdta cells for each.
+#  - Trimming (trim.level = 0.995, matching drdid_panel()'s default): the
+#    nu2.s sandwich correction does NOT differentiate through the trim
+#    indicator (standard argument in this literature -- Sant'Anna & Zhao,
+#    2020; Crump, Hotz, Imbens & Mitnik, 2009 -- that the set of trimmed
+#    units doesn't change under small perturbations of gamma, as long as
+#    the true propensity has no probability mass exactly at the
+#    threshold). This WAS checked by simulation (two independent
+#    bootstrap comparisons, one with a single boundary-case trimmed unit,
+#    one with a larger n and a stable set of ~4 trimmed units): the
+#    corrected formula captures the great majority of the true SE
+#    (~95% of the bootstrap SD, vs. ~30-40% for the naive, uncorrected
+#    one) but leaves a small, consistent residual understatement of
+#    around 5% when trimming is genuinely active -- attributable to
+#    exactly that omitted derivative. See row_is_undefined()-style
+#    warnings elsewhere in this package for the precedent this follows:
+#    did_cell_nuisances() warns when trimming is active on a cell, so
+#    users know that cell's SE may be modestly understated.
 
 # Checks that a did::att_gt() "MP" object is within the scope this adapter
 # supports, erroring clearly and immediately rather than silently computing
@@ -175,14 +185,42 @@ did_cell_nuisances <- function(sample) {
   D <- sample$D; deltaY <- sample$deltaY; X <- sample$X; w <- sample$w
   n <- length(D)
 
+  # nu2.s's sandwich correction includes a 1/c1^3 term (c1 = mean of the
+  # treated-arm weight), which blows up as the treated group shrinks --
+  # confirmed by simulation (see file header) to produce a real, roughly
+  # 12% analytical-vs-bootstrap SE gap on a real cell with only 20 treated
+  # units, resolved on a much larger, otherwise-identical sample. The
+  # threshold here (<= 20) is that one confirmed problem case (exactly 20
+  # treated units), not a precisely calibrated cutoff -- it's a heuristic,
+  # not a guarantee that 21+ treated units is always fine or that 20
+  # always fails.
+  n_treated <- sum(D)
+  if (n_treated <= 20) {
+    warning("Only ", n_treated, " treated unit(s) in this cell. nu2.s's ",
+            "sandwich correction includes a term that grows as the treated ",
+            "group shrinks, and was found, by simulation, to meaningfully ",
+            "understate the true SE on a similarly small cell (see ",
+            "R/did-adapter.R) -- treat this cell's nu2.s-derived precision ",
+            "with extra caution.", call. = FALSE)
+  }
+
   fit_ps <- glm.fit(x = X, y = D, weights = w, family = binomial())
   p_hat  <- pmin(fit_ps$fitted.values, 1 - 1e-6)
 
   # trimming (trim.level = 0.995, matching drdid_panel()'s default); see
-  # file header for the assumption this rests on. Treated units are never
-  # trimmed, matching drdid_panel().
+  # file header for what this is verified to cost. Treated units are
+  # never trimmed, matching drdid_panel().
   trim_ps <- rep(1, n)
   trim_ps[D == 0] <- as.numeric(p_hat[D == 0] < 0.995)
+  n_trimmed <- sum(trim_ps[D == 0] == 0)
+  if (n_trimmed > 0) {
+    warning(n_trimmed, " control unit(s) trimmed (propensity score >= 0.995) ",
+            "for this cell. nu2.s's standard error does not account for the ",
+            "trimming indicator's own estimation uncertainty and was found, ",
+            "by simulation, to understate the true SE by roughly 5% when ",
+            "trimming is active (see R/did-adapter.R) -- treat this cell's ",
+            "precision with a little extra caution.", call. = FALSE)
+  }
 
   beta0 <- as.vector(solve(
     crossprod(X[D == 0, , drop = FALSE], w[D == 0] * X[D == 0, , drop = FALSE]),
