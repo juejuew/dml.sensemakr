@@ -55,8 +55,10 @@ summary.dml <- function(object, combine.method = "median", ...){
   # rownames(main) <- "ate"
   main <- lapply(object$coefs$main, function(x) x[combine.method, ])
   main <- do.call("rbind", main)
-  rownames(main) <- paste0("ate.", rownames(main))
-  main <- expand.cmat(main)
+  if (!is.null(main)) {
+    rownames(main) <- paste0("ate.", rownames(main))
+    main <- expand.cmat(main)
+  }
   out$main <- main
 
   # check for groups

@@ -80,9 +80,16 @@ sensemakr.dml <- function(model,
 
   # benchmarks
   # if (!is.null(benchmark_covariates) & !is.null(model$results$main$all)) {
-  if (!is.null(benchmark_covariates) & !is.null(model$results$main[[1]])) {
-    bench.bounds <- dml_benchmark(model = model, benchmark_covariates = benchmark_covariates)
-    out$bench.bounds <- bench.bounds
+  if (!is.null(benchmark_covariates)) {
+    if (!is.null(model$results$main[[1]])) {
+      bench.bounds <- dml_benchmark(model = model, benchmark_covariates = benchmark_covariates)
+      out$bench.bounds <- bench.bounds
+    } else {
+      warning("benchmark_covariates was provided, but benchmarking is not available for ",
+              "this model (no 'main' ATE target -- e.g. a did::att_gt() adapter object, ",
+              "which only has group-level (g,t) estimates). Skipping benchmarking; ",
+              "bench.bounds will be NULL.", call. = FALSE)
+    }
   }
 
   class(out) <- "dml.sensemakr"

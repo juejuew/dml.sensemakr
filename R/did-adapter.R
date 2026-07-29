@@ -43,6 +43,25 @@
 #    warnings elsewhere in this package for the precedent this follows:
 #    did_cell_nuisances() warns when trimming is active on a cell, so
 #    users know that cell's SE may be modestly understated.
+#
+# sensemakr() on did_to_dml()'s output (results$main = NULL, groups-only):
+#  - sensemakr(), print(<dml.sensemakr>), robustness_value(),
+#    extreme_robustness_value(), confidence_bounds(), and
+#    dml_benchmark(model, only = "g<g>_t<t>") all work as expected.
+#  - summary(<dml.sensemakr>) does NOT work: summary.dml()/print.summary_dml()
+#    (R/print-summary-dml.R) assume a real cross-fitted dml() fit (object$fits,
+#    object$data, info$cf.folds/yreg/dreg), none of which this adapter
+#    populates. Use print() instead, which reports the same RV/RVa and
+#    confidence-bound tables per (g,t) cell.
+#  - plot(<dml.sensemakr>) with default args errors (it needs a "main" target
+#    to plot, which this adapter doesn't have). Pass group = TRUE,
+#    group.number = k to plot a specific (g,t) cell.
+#  - dml_benchmark()/benchmark_covariates are NOT available at all for this
+#    adapter's output, at any level: bench_fun() (R/benchmarks.R) reads
+#    exclusively from model$results$main, which this adapter always leaves
+#    NULL (results live in model$results$groups instead). sensemakr(...,
+#    benchmark_covariates = ...) detects this and skips with a warning
+#    rather than erroring.
 
 # Checks that a did::att_gt() "MP" object is within the scope this adapter
 # supports, erroring clearly and immediately rather than silently computing
