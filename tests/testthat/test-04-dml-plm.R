@@ -315,8 +315,14 @@ test_that("robustness_value()/extreme_robustness_value() return NA (not a mislea
   model$coefs$main <- list(all = dml.sensemakr:::combine.cross.fits(model$results$main$all))
   class(model) <- "dml"
 
-  expect_warning(rv <- robustness_value(model), "nu\\^2 is negative")
-  expect_warning(xrv <- extreme_robustness_value(model), "nu\\^2 is negative")
+  # each also produces an incidental NaN downstream (expected given the
+  # deliberately-negative nu2.s). quietly() must wrap expect_warning() here,
+  # not the other way around: expect_warning()'s own handler needs first
+  # crack at "nu^2 is negative" (that's the check this test is making) --
+  # quietly() only mops up the unrelated "NaNs produced" warning that falls
+  # through afterward.
+  quietly(expect_warning(rv <- robustness_value(model), "nu\\^2 is negative"))
+  quietly(expect_warning(xrv <- extreme_robustness_value(model), "nu\\^2 is negative"))
 
   expect_true(is.na(rv[["ate.all"]]))
   expect_true(is.na(xrv[["ate.all"]]))

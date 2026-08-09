@@ -15,11 +15,16 @@ test_that("Testing 401k PLM", {
   x <- model.matrix(~ age + farmer_dar + herder_dar +
                       pastvoted + hhsize_darfur + female + village, data = darfur)
 
-  dml.darfur <- dml(as.numeric(darfur$peacefactor),
-                    darfur$directlyharmed,
-                    x, model = "npm", cf.folds = 2, cf.reps = 5)
-  summary(dml.darfur)
-  bench <- dml_benchmark(dml.darfur, benchmark_covariates = c("female"))
+  # village is a factor with hundreds of levels; many of its dummy columns
+  # are near-constant within a given cross-fitting fold/leave-one-out
+  # benchmark refit, which is expected and harmless -- see helper-quiet.R.
+  quietly({
+    dml.darfur <- dml(as.numeric(darfur$peacefactor),
+                      darfur$directlyharmed,
+                      x, model = "npm", cf.folds = 2, cf.reps = 5)
+    summary(dml.darfur)
+    bench <- dml_benchmark(dml.darfur, benchmark_covariates = c("female"))
 
-  robustness_value(dml.darfur)
+    robustness_value(dml.darfur)
+  })
 })

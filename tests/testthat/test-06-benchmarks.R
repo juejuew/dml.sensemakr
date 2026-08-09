@@ -18,7 +18,9 @@ assign("x", model.matrix(~ -1 + age + inc + educ + fsize + marr + twoearn + pira
 bench_fit <- dml(y, d, x, model = "plm", cf.folds = 2, cf.reps = 1, verbose = FALSE)
 
 test_that("dml_benchmark returns correct class", {
-  bench <- dml_benchmark(bench_fit, benchmark_covariates = c("inc"))
+  # inc's gain estimate can come out slightly negative on this subsample --
+  # expected sampling noise (see helper-quiet.R), not what this test checks.
+  bench <- quietly(dml_benchmark(bench_fit, benchmark_covariates = c("inc")))
   expect_s3_class(bench, "dml_benchmark")
 })
 
@@ -36,13 +38,13 @@ test_that("the leave-one-out refit's call inherits the original fit's cf.seed (p
 })
 
 test_that("dml_benchmark with multiple covariates", {
-  bench <- dml_benchmark(bench_fit, benchmark_covariates = c("inc", "pira"))
+  bench <- quietly(dml_benchmark(bench_fit, benchmark_covariates = c("inc", "pira")))
   expect_s3_class(bench, "dml_benchmark")
 })
 
 test_that("summary.dml_benchmark does not error", {
-  bench <- dml_benchmark(bench_fit, benchmark_covariates = c("inc"))
-  expect_output(print(summary(bench)), regexp = NULL)
+  bench <- quietly(dml_benchmark(bench_fit, benchmark_covariates = c("inc")))
+  expect_output(quietly(print(summary(bench))), regexp = NULL)
 })
 
 # === benchmark_gain_y / benchmark_gain_d / benchmark_rho ===
@@ -317,12 +319,12 @@ test_that("benchmark_gain_y/benchmark_gain_d/benchmark_rho replicate ovb4did.pdf
 # can flip signs that small. So we only assert what's robust: inc's own
 # sign (unambiguous at rho = 0.34) and the magnitude ordering, which held
 # on the actual run even though pira/twoearn's signs didn't.
-plm_fit_table3 <- dml(y, d, x, model = "plm", cf.folds = 2, cf.reps = 5, verbose = FALSE)
-bench_table3   <- dml_benchmark(plm_fit_table3,
-                                benchmark_covariates = c("inc", "pira", "twoearn"))
+plm_fit_table3 <- quietly(dml(y, d, x, model = "plm", cf.folds = 2, cf.reps = 5, verbose = FALSE))
+bench_table3   <- quietly(dml_benchmark(plm_fit_table3,
+                                        benchmark_covariates = c("inc", "pira", "twoearn")))
 
 test_that("dml_benchmark's PLM results qualitatively match Long Story Short's Table 3", {
-  s <- summary(bench_table3)$benchmarks
+  s <- quietly(summary(bench_table3))$benchmarks
 
   # inc is the clearly dominant benchmark covariate
   expect_true(s["inc", "gain.Y"] > s["pira", "gain.Y"])
@@ -340,15 +342,15 @@ test_that("dml_benchmark's PLM results qualitatively match Long Story Short's Ta
 # === additional coverage: input validation, structure, and correctness ===
 # Shared fixtures (computed once, reused across the tests below) so we don't
 # re-run dml_benchmark()'s expensive refits for every single assertion.
-bench_single <- dml_benchmark(bench_fit, benchmark_covariates = "inc")
-bench_multi  <- dml_benchmark(bench_fit, benchmark_covariates = c("inc", "pira"))
+bench_single <- quietly(dml_benchmark(bench_fit, benchmark_covariates = "inc"))
+bench_multi  <- quietly(dml_benchmark(bench_fit, benchmark_covariates = c("inc", "pira")))
 
 # a second base fit (npm, cf.reps = 3) covers two gaps at once: benchmarking
 # on a nonparametric model, and summary.dml_benchmark's aggregation across
 # cross-fitting repetitions -- neither is exercised by the tests above,
 # which only use a plm model with cf.reps = 1.
-npm_fit   <- dml(y, d, x, model = "npm", cf.folds = 2, cf.reps = 3, verbose = FALSE)
-bench_npm <- dml_benchmark(npm_fit, benchmark_covariates = "inc")
+npm_fit   <- quietly(dml(y, d, x, model = "npm", cf.folds = 2, cf.reps = 3, verbose = FALSE))
+bench_npm <- quietly(dml_benchmark(npm_fit, benchmark_covariates = "inc"))
 
 test_that("dml_benchmark errors when a benchmark covariate is not found", {
   expect_error(dml_benchmark(bench_fit, benchmark_covariates = "not_a_covariate"),
@@ -438,7 +440,7 @@ test_that("all benchmark influence functions are finite", {
 })
 
 test_that("print.dml_benchmark does not error", {
-  expect_output(print(bench_single), regexp = NULL)
+  expect_output(quietly(print(bench_single)), regexp = NULL)
 })
 
 test_that("dml_benchmark works with a nonparametric (npm) model", {
@@ -448,16 +450,18 @@ test_that("dml_benchmark works with a nonparametric (npm) model", {
 })
 
 test_that("dml_benchmark supports dropping a group of columns together", {
-  bench_grp <- dml_benchmark(bench_fit, benchmark_covariates = list(grp = c("marr", "twoearn")))
+  bench_grp <- quietly(dml_benchmark(bench_fit, benchmark_covariates = list(grp = c("marr", "twoearn"))))
   expect_named(bench_grp$benchmarks, "grp")
   expect_equal(colnames(bench_grp$benchmarks$grp),
               c("gain.Y", "gain.D", "rho", "theta.s", "theta.sj", "delta"))
 })
 
 test_that("dml_benchmark works with an ATT-target nonparametric model", {
-  att_fit <- dml(y, d, x, model = "npm", target = "att",
-                 cf.folds = 2, cf.reps = 1, verbose = FALSE)
-  bench_att <- dml_benchmark(att_fit, benchmark_covariates = "inc")
+  quietly({
+    att_fit <- dml(y, d, x, model = "npm", target = "att",
+                   cf.folds = 2, cf.reps = 1, verbose = FALSE)
+    bench_att <- dml_benchmark(att_fit, benchmark_covariates = "inc")
+  })
   expect_s3_class(bench_att, "dml_benchmark")
   expect_equal(colnames(bench_att$benchmarks$inc),
               c("gain.Y", "gain.D", "rho", "theta.s", "theta.sj", "delta"))
@@ -470,7 +474,7 @@ test_that("dml_benchmark errors on a model fit with more than one target", {
 })
 
 test_that("summary.dml_benchmark returns a classed object with aggregated values", {
-  s <- summary(bench_npm, combine.method = "mean")
+  s <- quietly(summary(bench_npm, combine.method = "mean"))
   expect_s3_class(s, "summary_dml_benchmark")
   expect_equal(s$combine.method, "mean")
   # summary() must still carry the influence functions along, unlike before
@@ -479,7 +483,7 @@ test_that("summary.dml_benchmark returns a classed object with aggregated values
 })
 
 test_that("summary.dml_benchmark reports a standard error alongside every estimate", {
-  s <- summary(bench_npm, combine.method = "mean")
+  s <- quietly(summary(bench_npm, combine.method = "mean"))
   expect_equal(colnames(s$benchmarks),
               c("gain.Y", "se.gain.Y", "gain.D", "se.gain.D",
                 "rho", "se.rho", "delta", "se.delta"))
@@ -491,8 +495,10 @@ test_that("summary.dml_benchmark reports a standard error alongside every estima
 test_that("summary.dml_benchmark aggregates across cross-fitting repetitions correctly", {
   raw <- bench_npm$benchmarks$inc  # one row per cf.rep (cf.reps = 3)
 
-  s_mean   <- summary(bench_npm, combine.method = "mean")
-  s_median <- summary(bench_npm, combine.method = "median")
+  quietly({
+    s_mean   <- summary(bench_npm, combine.method = "mean")
+    s_median <- summary(bench_npm, combine.method = "median")
+  })
 
   expect_equal(unname(s_mean$benchmarks["inc", "gain.Y"]), mean(raw$gain.Y))
   expect_equal(unname(s_mean$benchmarks["inc", "delta"]), mean(raw$delta))
@@ -500,18 +506,20 @@ test_that("summary.dml_benchmark aggregates across cross-fitting repetitions cor
 })
 
 test_that("summary.dml_benchmark defaults to median, matching summary.dml/summary.dml.bounds", {
-  s_default <- summary(bench_npm)
-  s_median  <- summary(bench_npm, combine.method = "median")
+  quietly({
+    s_default <- summary(bench_npm)
+    s_median  <- summary(bench_npm, combine.method = "median")
+  })
   expect_equal(s_default$combine.method, "median")
   expect_equal(s_default$benchmarks, s_median$benchmarks)
 })
 
 test_that("print.dml_benchmark defaults to median, matching print.dml", {
-  expect_output(print(bench_npm), "median")
+  expect_output(quietly(print(bench_npm)), "median")
 })
 
 test_that("print.summary_dml_benchmark does not error and reports the combine method", {
-  expect_output(print(summary(bench_single, combine.method = "mean")),
+  expect_output(quietly(print(summary(bench_single, combine.method = "mean"))),
                "mean")
 })
 

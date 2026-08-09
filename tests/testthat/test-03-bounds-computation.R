@@ -60,10 +60,15 @@ test_that("bounds() warns when nu2 is negative", {
       psi.nu2.s = rnorm(10)
     )
   )
-  expect_warning(
+  # a negative nu2.s here also produces a NaN sqrt() downstream (expected
+  # given the deliberately-negative input). quietly() must wrap
+  # expect_warning(), not the reverse: expect_warning()'s own handler needs
+  # first crack at "nu^2 is negative" -- quietly() only mops up the
+  # unrelated "NaNs produced" warning that falls through afterward.
+  quietly(expect_warning(
     dml.sensemakr:::bounds(short.results, cf.y = 0.04, cf.d = 0.03),
     "nu\\^2 is negative"
-  )
+  ))
 })
 
 test_that("bounds() with zero sensitivity parameters gives zero bias", {

@@ -131,8 +131,8 @@ resolve_did_base_period <- function(dp, group, t) {
 # additionally includes units whose own first-treatment period is strictly
 # later than max(t, pret) + anticipation.
 #
-# NOTE: only the "nevertreated" branch has been independently validated
-# (see file header); "notyettreated" is traced from source but unverified.
+# Both branches have been independently validated by exact reproduction of
+# att_gt()'s own att/se on real mpdta cells (see file header).
 resolve_did_control_ids <- function(dp, group, t, pret) {
   d <- dp$data
   idname <- dp$idname; gname <- dp$gname
@@ -376,13 +376,6 @@ did_slot_name <- function(group, t) paste0("g", group, "_t", t)
 # skipped with a warning, rather than aborting the whole grid.
 did_to_dml <- function(mp) {
   validate_did_scope(mp)
-
-  if (identical(mp$DIDparams$control_group, "notyettreated")) {
-    warning("control_group = \"notyettreated\" is implemented from did's own ",
-            "source logic but has not been independently verified the same way ",
-            "as \"nevertreated\" (see R/did-adapter.R). Treat results with extra caution.",
-            call. = FALSE)
-  }
 
   groups_results <- list()
   for (k in seq_along(mp$group)) {

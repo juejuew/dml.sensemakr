@@ -39,13 +39,13 @@ test_that("validate_did_scope() rejects est_method other than 'dr'", {
 })
 
 test_that("did_cell_short_results() reproduces att_gt()'s own theta.s/se.theta.s exactly", {
-  sr <- dml.sensemakr:::did_cell_short_results(setup_did$mp, group = 2004, t = 2006)
+  sr <- quietly(dml.sensemakr:::did_cell_short_results(setup_did$mp, group = 2004, t = 2006))
   expect_equal(sr$estimates$theta.s, -0.1404483, tolerance = 1e-6)
   expect_equal(sr$estimates$se.theta.s, 0.03537815, tolerance = 1e-6)
 })
 
 test_that("did_cell_short_results() produces positive sigma2.s/nu2.s and finite SEs", {
-  sr <- dml.sensemakr:::did_cell_short_results(setup_did$mp, group = 2004, t = 2006)
+  sr <- quietly(dml.sensemakr:::did_cell_short_results(setup_did$mp, group = 2004, t = 2006))
   expect_true(sr$estimates$sigma2.s > 0)
   expect_true(sr$estimates$nu2.s > 0)
   expect_true(is.finite(sr$estimates$se.S2))
@@ -53,7 +53,7 @@ test_that("did_cell_short_results() produces positive sigma2.s/nu2.s and finite 
 })
 
 test_that("did_cell_short_results() psi vectors are all full-sample length, zero outside the cell", {
-  sr <- dml.sensemakr:::did_cell_short_results(setup_did$mp, group = 2004, t = 2006)
+  sr <- quietly(dml.sensemakr:::did_cell_short_results(setup_did$mp, group = 2004, t = 2006))
   n <- setup_did$mp$n
   expect_length(sr$psis$psi.theta.s, n)
   expect_length(sr$psis$psi.sigma2.s, n)
@@ -66,7 +66,7 @@ test_that("did_cell_short_results() psi vectors are all full-sample length, zero
 })
 
 test_that("did_cell_short_results() output feeds cleanly into prep_bounds()/bounds()", {
-  sr <- dml.sensemakr:::did_cell_short_results(setup_did$mp, group = 2004, t = 2006)
+  sr <- quietly(dml.sensemakr:::did_cell_short_results(setup_did$mp, group = 2004, t = 2006))
   fixed <- dml.sensemakr:::prep_bounds(sr)
   expect_equal(fixed$theta.s, sr$estimates$theta.s)
 
@@ -88,7 +88,11 @@ test_that("did_cell_short_results() output feeds cleanly into prep_bounds()/boun
 # silently coercing the whole coefficient vector into a list) fixed
 # alongside this feature -- see R/print-summary-dml.R.
 test_that("did_to_dml() builds a group per (group,t) cell, matching att_gt()'s own att exactly", {
-  model <- dml.sensemakr:::did_to_dml(setup_did$mp)
+  # g2004's real cohort has exactly 20 treated units, which legitimately
+  # triggers did_cell_nuisances()'s small-cohort warning on every cell built
+  # from it -- expected and unrelated to what this test checks (see
+  # helper-quiet.R and the dedicated test for that warning below).
+  model <- quietly(dml.sensemakr:::did_to_dml(setup_did$mp))
   expect_equal(length(model$results$groups), length(setup_did$mp$group))
   expect_null(model$results$main)
 
@@ -116,13 +120,13 @@ test_that("did_to_dml() skips no cells on a grid with no failed att_gt() cells",
 })
 
 test_that("did_to_dml()'s confint has one row per cell and matches coef.dml() length", {
-  model <- dml.sensemakr:::did_to_dml(setup_did$mp)
+  model <- quietly(dml.sensemakr:::did_to_dml(setup_did$mp))
   ci <- confint(model)
   expect_equal(nrow(ci), length(coef(model)))
 })
 
 test_that("robustness_value()/extreme_robustness_value() run across the full grid, XRV <= RV everywhere", {
-  model <- dml.sensemakr:::did_to_dml(setup_did$mp)
+  model <- quietly(dml.sensemakr:::did_to_dml(setup_did$mp))
   rv  <- robustness_value(model, theta = 0, alpha = 0.05)
   xrv <- extreme_robustness_value(model, theta = 0, alpha = 0.05)
   expect_length(rv, length(model$results$groups))
@@ -133,27 +137,35 @@ test_that("robustness_value()/extreme_robustness_value() run across the full gri
 })
 
 test_that("did_to_dml()'s dml_bounds(only=) for one group matches the single-cell adapter directly", {
-  model <- dml.sensemakr:::did_to_dml(setup_did$mp)
   target_slot <- "g2004_t2006"
-
-  full <- dml_bounds(model, cf.y = 0.03, cf.d = 0.04, rho2 = 1)
-  restricted <- dml_bounds(model, cf.y = 0.03, cf.d = 0.04, rho2 = 1,
-                           only = list(main = NULL, groups = target_slot))
+  quietly({
+    model <- dml.sensemakr:::did_to_dml(setup_did$mp)
+    full <- dml_bounds(model, cf.y = 0.03, cf.d = 0.04, rho2 = 1)
+    restricted <- dml_bounds(model, cf.y = 0.03, cf.d = 0.04, rho2 = 1,
+                             only = list(main = NULL, groups = target_slot))
+    sr_direct <- dml.sensemakr:::did_cell_short_results(setup_did$mp, group = 2004, t = 2006)
+  })
   expect_equal(restricted$results$groups[[target_slot]], full$results$groups[[target_slot]])
-
-  sr_direct <- dml.sensemakr:::did_cell_short_results(setup_did$mp, group = 2004, t = 2006)
   expect_equal(sr_direct$estimates$theta.s,
               model$results$groups[[target_slot]][[1]]$estimates$theta.s)
 })
 
-test_that("did_to_dml() warns clearly for control_group = 'notyettreated' (unverified path)", {
+test_that("did_to_dml() does not warn about control_group = 'notyettreated' being unverified", {
+  # mpdta's g2004 cohort still triggers the (unrelated, legitimate) small-
+  # treated-cohort warning regardless of control_group -- only check that the
+  # now-stale "not been independently verified" warning is gone.
   data("mpdta", package = "did")
   mp_nyt <- att_gt(yname = "lemp", tname = "year", idname = "countyreal",
                    gname = "first.treat", xformla = ~lpop, data = mpdta,
                    est_method = "dr", compute_inffunc = TRUE, bstrap = FALSE,
                    print_details = FALSE, control_group = "notyettreated",
                    base_period = "varying")
-  expect_warning(dml.sensemakr:::did_to_dml(mp_nyt), "not been independently verified")
+  msgs <- c()
+  withCallingHandlers(
+    dml.sensemakr:::did_to_dml(mp_nyt),
+    warning = function(w) { msgs <<- c(msgs, conditionMessage(w)); invokeRestart("muffleWarning") }
+  )
+  expect_false(any(grepl("independently verified", msgs)))
 })
 
 # === Cross-checks for the three previously-unverified settings, following
@@ -168,7 +180,7 @@ test_that("resolve_did_control_ids() for 'notyettreated' reproduces att_gt() exa
                    est_method = "dr", compute_inffunc = TRUE, bstrap = FALSE,
                    print_details = FALSE, control_group = "notyettreated",
                    base_period = "varying")
-  sr <- dml.sensemakr:::did_cell_short_results(mp_nyt, group = 2004, t = 2004)
+  sr <- quietly(dml.sensemakr:::did_cell_short_results(mp_nyt, group = 2004, t = 2004))
   k <- which(mp_nyt$group == 2004 & mp_nyt$t == 2004)
   expect_equal(sr$estimates$theta.s, mp_nyt$att[k], tolerance = 1e-8)
   expect_equal(sr$estimates$se.theta.s, mp_nyt$se[k], tolerance = 1e-8)
@@ -181,7 +193,7 @@ test_that("resolve_did_base_period() for 'universal', post-treatment cell, repro
                    est_method = "dr", compute_inffunc = TRUE, bstrap = FALSE,
                    print_details = FALSE, control_group = "nevertreated",
                    base_period = "universal")
-  sr <- dml.sensemakr:::did_cell_short_results(mp_uni, group = 2004, t = 2004)
+  sr <- quietly(dml.sensemakr:::did_cell_short_results(mp_uni, group = 2004, t = 2004))
   k <- which(mp_uni$group == 2004 & mp_uni$t == 2004)
   expect_equal(sr$estimates$theta.s, mp_uni$att[k], tolerance = 1e-8)
   expect_equal(sr$estimates$se.theta.s, mp_uni$se[k], tolerance = 1e-8)
@@ -197,7 +209,17 @@ test_that("did_to_dml() skips base_period = 'universal's trivial self-comparison
   n_na <- sum(is.na(mp_uni$se))
   expect_true(n_na > 0)  # this fixture is expected to have such cells
 
-  expect_warning(model <- dml.sensemakr:::did_to_dml(mp_uni), "trivial self-comparison")
+  # expect_warning() only guarantees that AT LEAST ONE raised warning matches
+  # its regexp -- with n_na > 1 skip warnings raised here (one per degenerate
+  # cell), the others aren't muffled by it and leak through as raw,
+  # unhandled warnings. Collect them all explicitly instead, as the sibling
+  # "skips no cells" test above does.
+  msgs <- c()
+  model <- withCallingHandlers(
+    dml.sensemakr:::did_to_dml(mp_uni),
+    warning = function(w) { msgs <<- c(msgs, conditionMessage(w)); invokeRestart("muffleWarning") }
+  )
+  expect_equal(sum(grepl("trivial self-comparison", msgs)), n_na)
   expect_equal(length(model$results$groups), length(mp_uni$group) - n_na)
 
   rv <- robustness_value(model)
@@ -208,11 +230,11 @@ test_that("did_to_dml() skips base_period = 'universal's trivial self-comparison
 
 test_that("resolve_did_base_period() with anticipation > 0 reproduces att_gt() exactly", {
   data("mpdta", package = "did")
-  mp_ant <- att_gt(yname = "lemp", tname = "year", idname = "countyreal",
-                   gname = "first.treat", xformla = ~lpop, data = mpdta,
-                   est_method = "dr", compute_inffunc = TRUE, bstrap = FALSE,
-                   print_details = FALSE, control_group = "nevertreated",
-                   base_period = "varying", anticipation = 1)
+  mp_ant <- quietly(att_gt(yname = "lemp", tname = "year", idname = "countyreal",
+                          gname = "first.treat", xformla = ~lpop, data = mpdta,
+                          est_method = "dr", compute_inffunc = TRUE, bstrap = FALSE,
+                          print_details = FALSE, control_group = "nevertreated",
+                          base_period = "varying", anticipation = 1))
   sr <- dml.sensemakr:::did_cell_short_results(mp_ant, group = 2006, t = 2007)
   k <- which(mp_ant$group == 2006 & mp_ant$t == 2007)
   expect_equal(sr$estimates$theta.s, mp_ant$att[k], tolerance = 1e-8)
@@ -275,7 +297,7 @@ test_that("did_cell_short_results() reproduces att_gt() exactly with a factor co
                       est_method = "dr", compute_inffunc = TRUE, bstrap = FALSE,
                       print_details = FALSE, control_group = "nevertreated",
                       base_period = "varying")
-  sr <- dml.sensemakr:::did_cell_short_results(mp_factor, group = 2004, t = 2006)
+  sr <- quietly(dml.sensemakr:::did_cell_short_results(mp_factor, group = 2004, t = 2006))
   k <- which(mp_factor$group == 2004 & mp_factor$t == 2006)
   expect_equal(sr$estimates$theta.s, mp_factor$att[k], tolerance = 1e-8)
   expect_equal(sr$estimates$se.theta.s, mp_factor$se[k], tolerance = 1e-8)
@@ -294,15 +316,17 @@ test_that("did_to_dml() runs end-to-end with mixed continuous + factor covariate
                      est_method = "dr", compute_inffunc = TRUE, bstrap = FALSE,
                      print_details = FALSE, control_group = "nevertreated",
                      base_period = "varying")
-  sr <- dml.sensemakr:::did_cell_short_results(mp_multi, group = 2004, t = 2006)
+  quietly({
+    sr <- dml.sensemakr:::did_cell_short_results(mp_multi, group = 2004, t = 2006)
+    model <- dml.sensemakr:::did_to_dml(mp_multi)
+    rv <- robustness_value(model)
+    xrv <- extreme_robustness_value(model)
+  })
   k <- which(mp_multi$group == 2004 & mp_multi$t == 2006)
   expect_equal(sr$estimates$theta.s, mp_multi$att[k], tolerance = 1e-8)
   expect_equal(sr$estimates$se.theta.s, mp_multi$se[k], tolerance = 1e-8)
 
-  model <- dml.sensemakr:::did_to_dml(mp_multi)
   expect_equal(length(model$results$groups), length(mp_multi$group))
-  rv <- robustness_value(model)
-  xrv <- extreme_robustness_value(model)
   expect_true(all(xrv <= rv + 1e-6))
 })
 
@@ -310,8 +334,10 @@ test_that("did_to_dml() runs end-to-end with mixed continuous + factor covariate
 # (results$main = NULL). See R/did-adapter.R's header for what is and isn't
 # expected to work here.
 test_that("sensemakr() and print() work on did_to_dml() output", {
-  model <- dml.sensemakr:::did_to_dml(setup_did$mp)
-  sens <- suppressWarnings(sensemakr(model, cf.y = 0.03, cf.d = 0.04))
+  quietly({
+    model <- dml.sensemakr:::did_to_dml(setup_did$mp)
+    sens <- sensemakr(model, cf.y = 0.03, cf.d = 0.04)
+  })
   expect_s3_class(sens, "dml.sensemakr")
   expect_equal(nrow(sens$sensitivity_stats), length(setup_did$mp$group))
   expect_equal(nrow(sens$conf.bounds), length(setup_did$mp$group))
@@ -320,24 +346,28 @@ test_that("sensemakr() and print() work on did_to_dml() output", {
 })
 
 test_that("summary() works on did_to_dml() output, skipping cross-fitting-specific reporting", {
-  model <- dml.sensemakr:::did_to_dml(setup_did$mp)
-  sens <- suppressWarnings(sensemakr(model, cf.y = 0.03, cf.d = 0.04))
+  quietly({
+    model <- dml.sensemakr:::did_to_dml(setup_did$mp)
+    sens <- sensemakr(model, cf.y = 0.03, cf.d = 0.04)
+  })
   expect_output(summary(sens), "Group Average Treatment Effect")
-  expect_no_error(suppressWarnings(summary(sens)))
+  expect_no_error(summary(sens))
   # no cross-fitting info exists for a did-adapter object -- these sections
   # must be silently skipped rather than erroring on missing object$fits.
-  expect_false(any(grepl("Cross-Fitting|ML Method", capture.output(suppressWarnings(summary(sens))))))
+  expect_false(any(grepl("Cross-Fitting|ML Method", capture.output(summary(sens)))))
 })
 
 test_that("plot() on did_to_dml() output errors clearly without group=TRUE, works with it", {
-  model <- dml.sensemakr:::did_to_dml(setup_did$mp)
-  sens <- suppressWarnings(sensemakr(model, cf.y = 0.03, cf.d = 0.04))
+  quietly({
+    model <- dml.sensemakr:::did_to_dml(setup_did$mp)
+    sens <- sensemakr(model, cf.y = 0.03, cf.d = 0.04)
+  })
   expect_error(plot(sens), "group = TRUE")
   expect_no_error(plot(sens, group = TRUE, group.number = 1))
 })
 
 test_that("sensemakr(benchmark_covariates=) warns rather than silently skipping for did output", {
-  model <- dml.sensemakr:::did_to_dml(setup_did$mp)
+  model <- quietly(dml.sensemakr:::did_to_dml(setup_did$mp))
   expect_warning(
     sens <- sensemakr(model, cf.y = 0.03, cf.d = 0.04, benchmark_covariates = "lpop"),
     "benchmarking is not available"
