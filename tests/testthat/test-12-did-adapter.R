@@ -241,43 +241,21 @@ test_that("resolve_did_base_period() with anticipation > 0 reproduces att_gt() e
   expect_equal(sr$estimates$se.theta.s, mp_ant$se[k], tolerance = 1e-8)
 })
 
-# === Trimming warning ===
-# nu2.s's sandwich correction doesn't differentiate through the trim
-# indicator; verified by simulation (see R/did-adapter.R) to leave a
-# small (~5%) residual SE understatement when trimming is genuinely
-# active. did_cell_nuisances() warns whenever that happens.
-test_that("did_cell_nuisances() warns when trimming is active, and not otherwise", {
-  set.seed(99)
-  n <- 500
-  X <- cbind(1, c(runif(n - 1, -2, 2), 8))  # one extreme covariate value
-  D <- c(rbinom(n - 1, 1, plogis(X[1:(n-1), 2])), 0)  # force the extreme unit to be a control
-  deltaY <- rnorm(n)
-  w <- rep(1, n)
-  sample_trim <- list(D = D, deltaY = deltaY, X = X, w = w)
-  expect_warning(dml.sensemakr:::did_cell_nuisances(sample_trim), "trimmed")
-
-  sample_notrim <- list(D = D[1:(n-1)], deltaY = deltaY[1:(n-1)],
-                        X = X[1:(n-1), , drop = FALSE], w = w[1:(n-1)])
-  expect_no_warning(dml.sensemakr:::did_cell_nuisances(sample_notrim))
-})
-
-# === Small treated-cohort warning ===
-# nu2.s's sandwich correction includes a 1/c1^3 term that grows as the
-# treated group shrinks; confirmed by simulation (see R/did-adapter.R) to
-# produce a real ~12% analytical-vs-bootstrap SE gap on a real cell with
-# exactly 20 treated units. did_cell_nuisances() warns at n_treated <= 20.
-test_that("did_cell_nuisances() warns for a small treated cohort, and not for a larger one", {
+# === did_cell_nuisances() is now validation-only (no beta1, no warnings) ===
+# The old sandwich-correction warnings (trimming, small treated cohort) were
+# specific to the pooled nu2.s formula this adapter no longer computes --
+# did_cell_nuisances() is now used only by recompute_drdid_att()'s ATT
+# consistency check (drdid-adapter.R), and no longer returns beta1.
+test_that("did_cell_nuisances() no longer fits or returns a treated-arm model", {
   set.seed(5)
   n <- 400
   X <- cbind(1, rnorm(n))
-  D_small <- c(rep(1, 15), rep(0, n - 15))  # 15 treated: below the threshold
-  D_large <- c(rep(1, 100), rep(0, n - 100))  # 100 treated: well above it
+  D <- c(rep(1, 100), rep(0, n - 100))
   deltaY <- rnorm(n)
   w <- rep(1, n)
-
-  expect_warning(dml.sensemakr:::did_cell_nuisances(list(D = D_small, deltaY = deltaY, X = X, w = w)),
-                "treated unit")
-  expect_no_warning(dml.sensemakr:::did_cell_nuisances(list(D = D_large, deltaY = deltaY, X = X, w = w)))
+  nuis <- dml.sensemakr:::did_cell_nuisances(list(D = D, deltaY = deltaY, X = X, w = w))
+  expect_null(nuis$beta1)
+  expect_true(all(c("p_hat", "trim_ps", "beta0") %in% names(nuis)))
 })
 
 # === Categorical / multiple covariates ===

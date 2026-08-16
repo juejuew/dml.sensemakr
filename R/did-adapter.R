@@ -3,46 +3,79 @@
 #
 # theta.s/psi.theta.s are read directly from att_gt()'s own output
 # (verified to exactly reproduce it -- see the one-cell empirical
-# cross-check in project notes). sigma2.s/nu2.s and their influence
-# functions are computed here, following the same non-cross-fitted
-# M-estimation construction did/DRDID use internally for theta.s (nuisances
-# fit once on the full 2x2 comparison sample), extended with a new mu1(X)
-# fit (the treated-arm outcome-change regression, which DR-DiD's own
-# estimator never needs but sigma2.s's "each unit's own arm" definition
-# does).
+# cross-check in project notes). sigma2.s/nu2.s are the MAIN-PAPER,
+# control-population scale parameters
+#
+#   sigma_0s^2 := E[Var(deltaY | X, D=0) | D=0]
+#   nu_0s^2    := E[(pi(X)/(1-pi(X))) / (p/(1-p)))^2 | D=0]     (p = P(D=1))
+#
+# -- NOT the pooled/unconditional sigma_s^2, nu_s^2 of the appendix
+# parameterization that ate.plm()/ate.npm() (R/short-parameters.R) compute
+# for the package's own DML fits. An earlier version of this file computed
+# the pooled quantities here too (via an extra treated-arm outcome model,
+# mu1(X) = E[deltaY|X,D=1]); that was a real error for this adapter's use
+# case -- ovb4did's Theorem 1 (the bound this package feeds into via
+# bounds()/dml_bounds()) is stated in terms of the control-population
+# sigma_0s^2/nu_0s^2, not the pooled ones. See did_cell_scale_nuisances()/
+# did_cell_sigma2_nu2() below for the corrected, Neyman-orthogonal,
+# cross-fitted estimators, and the git history of this file for the
+# removed pooled-parameterization code.
+#
+# Architecture (unchanged by the above correction):
+#  - theta.s/psi.theta.s: external, from att_gt() (did_cell_short_results()
+#    never re-estimates the ATT itself).
+#  - did_cell_sample(): reconstructs the exact (D, deltaY, X, w) 2x2
+#    comparison sample att_gt() used internally for one (group, t) cell,
+#    from DIDparams$data alone.
+#  - did_cell_scale_nuisances(): L-fold cross-fitted (pi_hat, p_hat, g_hat)
+#    for the sigma_0s^2/nu_0s^2 estimating equations. Unlike theta.s's own
+#    nuisances (which att_gt()/DRDID fit once on the full cell, no
+#    cross-fitting -- see did_cell_nuisances() below), these are
+#    genuinely cross-fitted DML nuisances, per the main paper's own
+#    construction for these components.
+#  - did_cell_sigma2_nu2(): solves the paper's Neyman-orthogonal
+#    estimating equations for sigma_0s^2/nu_0s^2 from those nuisances, and
+#    returns their influence functions -- feeding the SAME short.results
+#    fields (sigma2.s, nu2.s, psi.sigma2.s.cell, psi.nu2.s.cell) the rest
+#    of the package (prep_bounds()/bounds() in R/bias-bounds.R) already
+#    expects, so nothing downstream of this file needed to change: S =
+#    sqrt(sigma2.s*nu2.s), psi.S2 = sigma2.s*psi.nu2.s + nu2.s*psi.sigma2.s,
+#    and every bound/SE bias-bounds.R derives from those two are already
+#    generic in (theta.s, sigma2.s, nu2.s, their psis) and don't assume
+#    anything about how sigma2.s/nu2.s were estimated.
+#  - did_cell_nuisances()/recompute_drdid_att() (drdid-adapter.R): a
+#    SEPARATE, non-cross-fitted, full-cell (propensity + control-arm
+#    outcome only, no treated-arm model) refit used ONLY to verify that a
+#    caller-supplied sample reproduces fit$ATT -- this is a consistency
+#    check on theta.s, not part of the sigma_0s^2/nu_0s^2 estimator.
 #
 # Scope, and what has actually been verified so far:
 #  - panel data, est_method = "dr", no clustering, fix_weights unset --
 #    validate_did_scope() enforces these and errors otherwise.
+#  - unit weights only (all w == 1) for the cross-fitted sigma_0s^2/
+#    nu_0s^2 estimator -- validate_unit_weights() enforces this and errors
+#    otherwise. theta.s/psi.theta.s (external, from att_gt()/DRDID) are
+#    unaffected and work with whatever weights att_gt()/drdid_panel() were
+#    themselves given.
 #  - control_group = "nevertreated": base-period resolution, treated/
 #    control filtering, and the resulting theta.s/psi.theta.s were
 #    verified to exactly reproduce att_gt()'s own numbers on a real
-#    (mpdta) cell. sigma2.s needs no sandwich correction (verified via
-#    bootstrap: an envelope-theorem argument, since beta0/beta1 solve
-#    their own weighted-least-squares first-order condition). nu2.s's
-#    sandwich correction (for gamma/c1/c0's estimation uncertainty) was
-#    verified via bootstrap on both an unweighted and a weighted
-#    simulated sample.
+#    (mpdta) cell.
 #  - control_group = "notyettreated" and base_period = "universal" (and
 #    anticipation > 0) have ALSO been verified the same way -- exact
 #    reproduction of att_gt()'s own att/se on real mpdta cells for each.
-#  - Trimming (trim.level = 0.995, matching drdid_panel()'s default): the
-#    nu2.s sandwich correction does NOT differentiate through the trim
-#    indicator (standard argument in this literature -- Sant'Anna & Zhao,
-#    2020; Crump, Hotz, Imbens & Mitnik, 2009 -- that the set of trimmed
-#    units doesn't change under small perturbations of gamma, as long as
-#    the true propensity has no probability mass exactly at the
-#    threshold). This WAS checked by simulation (two independent
-#    bootstrap comparisons, one with a single boundary-case trimmed unit,
-#    one with a larger n and a stable set of ~4 trimmed units): the
-#    corrected formula captures the great majority of the true SE
-#    (~95% of the bootstrap SD, vs. ~30-40% for the naive, uncorrected
-#    one) but leaves a small, consistent residual understatement of
-#    around 5% when trimming is genuinely active -- attributable to
-#    exactly that omitted derivative. See row_is_undefined()-style
-#    warnings elsewhere in this package for the precedent this follows:
-#    did_cell_nuisances() warns when trimming is active on a cell, so
-#    users know that cell's SE may be modestly understated.
+#  - The (n/n1) rescaling and zero-padding used to embed a cell's own
+#    psi.sigma2.s.cell/psi.nu2.s.cell into the full mp$n-length vector
+#    (did_cell_short_results(), below) was cross-checked directly against
+#    did's own source (run_DRDID(): "if_x <- (n/n1) * attgt$att.inf.func"
+#    for panel data) and against how did lays out unit rows: data is
+#    sorted by (tname, gname, idname) in did_standardization(), then
+#    time_invariant_data <- data[1:id_count] and cohort/control index
+#    blocks (get_did_cohort_index()) are built on that SAME sorted table
+#    -- so row i of DIDparams$time_invariant_data really is unit i of
+#    mp$inffunc's index space, and match(sample$ids,
+#    time_invariant_data[[idname]]) (used below) look up that row by ID,
+#    not by an assumed row-order coincidence.
 #
 # sensemakr() on did_to_dml()'s output (results$main = NULL, groups-only):
 #  - sensemakr(), print(<dml.sensemakr>), summary(<dml.sensemakr>),
@@ -194,116 +227,220 @@ did_cell_sample <- function(mp, group, t) {
       group = group, t = t, pret = pret, n1 = length(keep_ids))
 }
 
-# Fits the propensity score (weighted logit) and both outcome-change
-# regressions (control-arm mu0, matching drdid_panel()'s own fit; and the
-# new treated-arm mu1) on a single cell's reconstructed sample. Mirrors
+# Fits the propensity score (weighted logit) and the control-arm outcome-
+# change regression (mu0) on a single cell's reconstructed sample. Mirrors
 # drdid_panel()'s own fastglm_fit() calls (full sample, no cross-fitting),
 # via base R's glm.fit()/solve() -- verified numerically equivalent for the
-# validated cell (see file header).
-did_cell_nuisances <- function(sample) {
+# validated cell (see file header). USED ONLY as the consistency check in
+# recompute_drdid_att() (drdid-adapter.R) that a caller-supplied sample
+# reproduces fit$ATT -- NOT used to estimate sigma2.s/nu2.s (see
+# did_cell_scale_nuisances()/did_cell_sigma2_nu2() for that). There is
+# therefore no treated-arm outcome model (mu1) here: recompute_drdid_att()
+# never needed one (DR-DiD's own att formula doesn't use it), and the old
+# pooled sigma2.s that did need one has been removed (see file header).
+#
+# `trim.level` defaults to drdid_panel()'s own default (0.995); pass the
+# actual trim.level a given fit was produced with when it might differ
+# (drdid-adapter.R does, reading it from fit$argu$trim.level) -- otherwise
+# recompute_drdid_att()'s consistency check would replicate the WRONG
+# trimming rule and could spuriously fail (or, worse, spuriously pass by
+# coincidence) for a fit produced with a non-default trim.level.
+did_cell_nuisances <- function(sample, trim.level = 0.995) {
   D <- sample$D; deltaY <- sample$deltaY; X <- sample$X; w <- sample$w
   n <- length(D)
-
-  # nu2.s's sandwich correction includes a 1/c1^3 term (c1 = mean of the
-  # treated-arm weight), which blows up as the treated group shrinks --
-  # confirmed by simulation (see file header) to produce a real, roughly
-  # 12% analytical-vs-bootstrap SE gap on a real cell with only 20 treated
-  # units, resolved on a much larger, otherwise-identical sample. The
-  # threshold here (<= 20) is that one confirmed problem case (exactly 20
-  # treated units), not a precisely calibrated cutoff -- it's a heuristic,
-  # not a guarantee that 21+ treated units is always fine or that 20
-  # always fails.
-  n_treated <- sum(D)
-  if (n_treated <= 20) {
-    warning("Only ", n_treated, " treated unit(s) in this cell. nu2.s's ",
-            "sandwich correction includes a term that grows as the treated ",
-            "group shrinks, and was found, by simulation, to meaningfully ",
-            "understate the true SE on a similarly small cell (see ",
-            "R/did-adapter.R) -- treat this cell's nu2.s-derived precision ",
-            "with extra caution.", call. = FALSE)
-  }
 
   fit_ps <- glm.fit(x = X, y = D, weights = w, family = binomial())
   p_hat  <- pmin(fit_ps$fitted.values, 1 - 1e-6)
 
-  # trimming (trim.level = 0.995, matching drdid_panel()'s default); see
-  # file header for what this is verified to cost. Treated units are
-  # never trimmed, matching drdid_panel().
+  # trimming -- needed here so that recompute_drdid_att() replicates
+  # drdid_panel()'s own att formula exactly, including its trimming.
+  # Treated units are never trimmed, matching drdid_panel().
   trim_ps <- rep(1, n)
-  trim_ps[D == 0] <- as.numeric(p_hat[D == 0] < 0.995)
-  n_trimmed <- sum(trim_ps[D == 0] == 0)
-  if (n_trimmed > 0) {
-    warning(n_trimmed, " control unit(s) trimmed (propensity score >= 0.995) ",
-            "for this cell. nu2.s's standard error does not account for the ",
-            "trimming indicator's own estimation uncertainty and was found, ",
-            "by simulation, to understate the true SE by roughly 5% when ",
-            "trimming is active (see R/did-adapter.R) -- treat this cell's ",
-            "precision with a little extra caution.", call. = FALSE)
-  }
+  trim_ps[D == 0] <- as.numeric(p_hat[D == 0] < trim.level)
 
   beta0 <- as.vector(solve(
     crossprod(X[D == 0, , drop = FALSE], w[D == 0] * X[D == 0, , drop = FALSE]),
     crossprod(X[D == 0, , drop = FALSE], w[D == 0] * deltaY[D == 0])
   ))
-  beta1 <- as.vector(solve(
-    crossprod(X[D == 1, , drop = FALSE], w[D == 1] * X[D == 1, , drop = FALSE]),
-    crossprod(X[D == 1, , drop = FALSE], w[D == 1] * deltaY[D == 1])
-  ))
 
-  list(p_hat = p_hat, trim_ps = trim_ps, beta0 = beta0, beta1 = beta1)
+  list(p_hat = p_hat, trim_ps = trim_ps, beta0 = beta0)
 }
 
-# Computes sigma2.s/psi.sigma2.s and nu2.s/psi.nu2.s (both at the SINGLE
-# cell's own sample size -- rescaled to full-sample by the caller) for one
-# (group, t) cell. See file header for what's verified.
-did_cell_sigma2_nu2 <- function(sample, nuis) {
+# Errors if propensity-score trimming is ACTUALLY active for this cell's
+# analysis population -- i.e. at least one control unit's fitted propensity
+# is >= trim.level, so drdid_panel() (called directly, or internally by
+# did::att_gt(est_method = "dr")) excludes it from the external ATT via its
+# own trim.ps[D==0] <- (ps.fit[D==0] < trim.level) rule (see DRDID::
+# drdid_panel()'s source). When that happens, theta.s/psi.theta.s (external,
+# defined on the TRIMMED sample) and this adapter's sigma2.s/nu2.s (defined
+# on the FULL reconstructed cell -- did_cell_scale_nuisances() does not
+# implement any trimming, see file header "Scope") would no longer target
+# the same analysis population -- the external-estimator compatibility
+# assumption this whole adapter relies on (see file header) would be
+# violated. Paper-consistent sensitivity analysis for a trimmed ATT target
+# has not been derived, so such cells are rejected rather than silently
+# computed on mismatched populations.
+#
+# trim.level < 1 alone is NOT grounds for rejection -- drdid_panel()'s
+# default (0.995) is virtually always set, but in most datasets no
+# observation actually crosses it. Only ACTIVE trimming (the indicator
+# actually firing for >= 1 control) is rejected.
+validate_no_active_trimming <- function(D, p_hat, trim.level) {
+  n_trimmed <- sum(D == 0 & p_hat >= trim.level)
+  if (n_trimmed > 0) {
+    stop(n_trimmed, " control unit(s) have an estimated propensity score ",
+        ">= trim.level (", trim.level, ") and are therefore TRIMMED by the ",
+        "external DR-DiD ATT estimator (DRDID::drdid_panel(), used directly ",
+        "or internally by did::att_gt(est_method = \"dr\")). When trimming ",
+        "is active, the external theta.s and this adapter's sigma2.s/nu2.s ",
+        "no longer correspond to the same analysis population -- ",
+        "paper-consistent sensitivity analysis for a trimmed ATT target has ",
+        "not yet been derived/supported. This cell cannot be used with this ",
+        "adapter.")
+  }
+  invisible(TRUE)
+}
+
+# Errors if any weight differs from 1 -- the cross-fitted sigma_0s^2/
+# nu_0s^2 estimating equations below have only been derived for unit
+# weights (see file header, "Scope").
+validate_unit_weights <- function(w) {
+  if (!isTRUE(all.equal(unname(w), rep(1, length(w)), tolerance = 1e-8, check.attributes = FALSE))) {
+    stop("The cross-fitted sigma2.s/nu2.s (sigma_0s^2/nu_0s^2) estimator ",
+        "currently only supports unit weights (all w == 1). Non-unit ",
+        "sampling weights have not been separately derived for this ",
+        "estimator -- see R/did-adapter.R.")
+  }
+  invisible(TRUE)
+}
+
+# Assigns each of n1 cell observations to one of L folds for the
+# cross-fitted scale-nuisance estimation below. A single common partition
+# is used for all three nuisances (g_0s, pi, p), per the main paper's
+# construction.
+make_cv_folds <- function(n1, L, seed) {
+  if (!is.null(seed)) set.seed(seed)
+  sample(rep_len(seq_len(L), n1))
+}
+
+# L-fold cross-fitted nuisances for the paper's control-population scale
+# estimators (see file header): g_0s(X) = E[deltaY|X,D=0] (weighted-least-
+# squares outcome regression, fit ONLY on D=0 units of the training fold),
+# pi(X) = P(D=1|X) (weighted logistic regression, fit on the full training
+# fold), and p_l = mean(D) in the training fold (the fold's own estimate of
+# the marginal treatment probability p = P(D=1)). Every held-out
+# observation is scored using nuisances trained on the OTHER folds only.
+#
+# Why the marginal p_l (not the conditional pi_hat(X)) belongs in
+# sigma_0s^2/nu_0s^2's estimating equations (did_cell_sigma2_nu2(), below):
+# for any h(X), E[(1-D)/(1-p) * h(X)] = E_X[h(X) * (1-pi(X))] / (1-p) =
+# E[h(X) | D=0] by Bayes' rule (f(X|D=0) = f(X)*(1-pi(X))/(1-p)) -- i.e.
+# using the MARGINAL p as the reweighting denominator is exactly what
+# converts a whole-population moment into the control-population moment
+# the paper's sigma_0s^2/nu_0s^2 are defined as. Using the CONDITIONAL
+# pi_hat(X) there instead would collapse the reweighting to the trivial
+# identity E[(1-D)/(1-pi(X))*h(X)] = E_X[h(X)] -- the WHOLE-population
+# mean of h(X), not the control-population one. pi_hat(X) is still needed,
+# but only inside r_i = odds-ratio(X_i) itself (did_cell_sigma2_nu2()).
+did_cell_scale_nuisances <- function(sample, L = 5, seed = 1) {
   D <- sample$D; deltaY <- sample$deltaY; X <- sample$X; w <- sample$w
-  n <- length(D)
-  p_hat <- nuis$p_hat; trim_ps <- nuis$trim_ps
-  beta0 <- nuis$beta0; beta1 <- nuis$beta1
+  n1 <- length(D)
+  validate_unit_weights(w)
 
-  # --- sigma2.s: no sandwich correction needed (envelope theorem) ---
-  gs <- as.vector(ifelse(D == 1, X %*% beta1, X %*% beta0))
-  sigma2_hat <- mean(w * (deltaY - gs)^2)
-  psi_sigma2_cell <- w * (deltaY - gs)^2 - sigma2_hat
+  fold <- make_cv_folds(n1, L, seed)
 
-  # --- nu2.s: sandwich correction needed for gamma/c1/c0 ---
-  w1 <- w * D * trim_ps
-  w0 <- w * (1 - D) * p_hat / (1 - p_hat) * trim_ps
-  c1 <- mean(w1); c0 <- mean(w0)
-  a  <- w1 / c1 - w0 / c0
-  nu2_hat <- mean(a^2)
-  psi_nu2_naive <- a^2 - nu2_hat
+  pi_hat <- rep(NA_real_, n1)
+  p_hat  <- rep(NA_real_, n1)
+  g_hat  <- rep(NA_real_, n1)
 
-  score_mat <- (w * (D - p_hat)) * X
-  Wd <- w * p_hat * (1 - p_hat)
-  Hbar <- crossprod(X, X * Wd) / n
-  IF_gamma <- score_mat %*% solve(Hbar)
+  for (l in seq_len(L)) {
+    train <- which(fold != l)
+    held  <- which(fold == l)
 
-  Ew1sq <- mean(w1^2)
-  Ew0sq <- mean(w0^2)
-  Ew0X  <- colMeans(w0 * X)
+    D_tr <- D[train]; X_tr <- X[train, , drop = FALSE]; dY_tr <- deltaY[train]
 
-  IF_c0 <- (w0 - c0) + as.vector(IF_gamma %*% Ew0X)
-  corr_gamma <- (2 / c0^2) * as.vector(IF_gamma %*% colMeans(w0^2 * X))
-  corr_c1    <- -(2 / c1^3) * Ew1sq * (w1 - c1)
-  corr_c0    <- -(2 / c0^3) * Ew0sq * IF_c0
+    if (sum(D_tr) < 1L || sum(D_tr) > length(D_tr) - 1L) {
+      stop("Fold ", l, " of the cross-fitted scale-estimation split has no ",
+          "variation in D in its training set (all treated or all control) ",
+          "-- cannot fit a propensity model. Try a smaller `cf.folds`.")
+    }
+    X0_tr <- X_tr[D_tr == 0, , drop = FALSE]
+    if (nrow(X0_tr) <= ncol(X0_tr)) {
+      stop("Fold ", l, " of the cross-fitted scale-estimation split has too ",
+          "few control units in its training set to fit g_0s(X) (need more ",
+          "than ", ncol(X0_tr), " control observations). Try a smaller ",
+          "`cf.folds`.")
+    }
 
-  psi_nu2_cell <- psi_nu2_naive + corr_gamma + corr_c1 + corr_c0
+    fit_pi  <- glm.fit(x = X_tr, y = D_tr, family = binomial())
+    eta_hld <- as.vector(X[held, , drop = FALSE] %*% fit_pi$coefficients)
+    pi_hat[held] <- 1 / (1 + exp(-eta_hld))
+
+    p_hat[held] <- mean(D_tr)
+
+    dY0_tr <- dY_tr[D_tr == 0]
+    beta_g <- as.vector(solve(crossprod(X0_tr), crossprod(X0_tr, dY0_tr)))
+    g_hat[held] <- as.vector(X[held, , drop = FALSE] %*% beta_g)
+  }
+
+  eps <- 1e-6
+  pi_hat <- pmin(pmax(pi_hat, eps), 1 - eps)
+  p_hat  <- pmin(pmax(p_hat, eps), 1 - eps)
+
+  list(pi_hat = pi_hat, p_hat = p_hat, g_hat = g_hat, fold = fold)
+}
+
+# Solves the paper's Neyman-orthogonal estimating equations for
+# sigma_0s^2/nu_0s^2 from cross-fitted nuisances (did_cell_scale_nuisances()
+# above), and returns their influence functions -- at the SINGLE cell's own
+# sample size (rescaled to full-sample by the caller). Output field names
+# match the pooled-parameterization code this replaces (sigma2.s, nu2.s,
+# psi.sigma2.s.cell, psi.nu2.s.cell), so downstream embedding/rescaling
+# (did_cell_short_results()) and every consumer in R/bias-bounds.R are
+# unchanged. See file header for what's verified and the derivation.
+did_cell_sigma2_nu2 <- function(sample, nuis) {
+  D <- sample$D; deltaY <- sample$deltaY
+  pi_hat <- nuis$pi_hat; p_hat <- nuis$p_hat; g_hat <- nuis$g_hat
+
+  # r_i = odds-ratio(X_i) = [pi(X_i)/(1-pi(X_i))] / [p/(1-p)]
+  r <- (pi_hat / (1 - pi_hat)) / (p_hat / (1 - p_hat))
+
+  # --- sigma_0s^2 := E[Var(deltaY | X, D=0) | D=0] ---
+  a_sigma <- -(1 - D) / (1 - p_hat)
+  b_sigma <- (1 - D) / (1 - p_hat) * (deltaY - g_hat)^2
+  mean_a_sigma <- mean(a_sigma)
+  sigma2_hat <- -mean(b_sigma) / mean_a_sigma
+  psi_sigma_hat <- a_sigma * sigma2_hat + b_sigma
+  phi_sigma <- -psi_sigma_hat / mean_a_sigma
+
+  # --- nu_0s^2 := E[(pi(X)/(1-pi(X)) / (p/(1-p)))^2 | D=0] ---
+  a_nu <- -2 * D / p_hat + (1 - D) / (1 - p_hat)
+  b_nu <- 2 * D / p_hat * r - (1 - D) / (1 - p_hat) * r^2
+  mean_a_nu <- mean(a_nu)  # -> -1 asymptotically, but NOT hard-coded: see
+                            # item 5 of the request this implements -- p_hat
+                            # is fold-estimated, so this need not equal -1
+                            # exactly in finite samples.
+  nu2_hat <- -mean(b_nu) / mean_a_nu
+  psi_nu_hat <- a_nu * nu2_hat + b_nu
+  phi_nu <- -psi_nu_hat / mean_a_nu
 
   list(sigma2.s = sigma2_hat, nu2.s = nu2_hat,
-      psi.sigma2.s.cell = psi_sigma2_cell, psi.nu2.s.cell = psi_nu2_cell)
+      psi.sigma2.s.cell = phi_sigma, psi.nu2.s.cell = phi_nu)
 }
 
 # Assembles a short.results-shaped object (matching what ate.plm()/
 # ate.npm() return) for a single (group, t) cell of a did::att_gt() "MP"
 # object, ready to feed into prep_bounds()/bounds(). theta.s/psi.theta.s
 # are read directly from att_gt()'s own output; sigma2.s/nu2.s/their psis
-# are computed above and rescaled to the same full-sample, zero-padded
-# convention att.inf.func already uses (see did:::run_DRDID()'s own
-# (n/n1)-rescaling, verified to reproduce the same SE as computing directly
-# on the cell's own n1-length psi).
-did_cell_short_results <- function(mp, group, t) {
+# are the cross-fitted control-population estimators (did_cell_scale_
+# nuisances()/did_cell_sigma2_nu2(), see file header) rescaled to the same
+# full-sample, zero-padded convention att.inf.func already uses (see
+# did:::run_DRDID()'s own (n/n1)-rescaling -- verified directly against
+# did's source, see file header).
+#
+# `cf.folds`/`cf.seed` control the L-fold cross-fitting used for sigma2.s/
+# nu2.s only (theta.s/psi.theta.s are untouched, since they are external).
+did_cell_short_results <- function(mp, group, t, cf.folds = 5, cf.seed = 1) {
   validate_did_scope(mp)
 
   k <- which(mp$group == group & mp$t == t)
@@ -317,7 +454,18 @@ did_cell_short_results <- function(mp, group, t) {
   n <- mp$n
 
   sample <- did_cell_sample(mp, group, t)
-  nuis   <- did_cell_nuisances(sample)
+
+  # did::att_gt() never exposes a trim.level argument -- run_DRDID() always
+  # calls drdid_panel() (for est_method = "dr", the only est_method this
+  # adapter supports) without one, so it always uses DRDID's own hardcoded
+  # default (0.995), confirmed against did's source. Refit the same
+  # full-sample (non-cross-fitted) propensity model drdid_panel() itself
+  # would fit, purely to check whether that trimming is actually active for
+  # this cell -- see validate_no_active_trimming().
+  nuis_val <- did_cell_nuisances(sample, trim.level = 0.995)
+  validate_no_active_trimming(sample$D, nuis_val$p_hat, trim.level = 0.995)
+
+  nuis   <- did_cell_scale_nuisances(sample, L = cf.folds, seed = cf.seed)
   comp   <- did_cell_sigma2_nu2(sample, nuis)
 
   scale <- n / sample$n1
@@ -374,7 +522,7 @@ did_slot_name <- function(group, t) paste0("g", group, "_t", t)
 # silently dropped. Cells where this adapter's own nuisance refit fails
 # (e.g. a singular design matrix in a very small subgroup) are also
 # skipped with a warning, rather than aborting the whole grid.
-did_to_dml <- function(mp) {
+did_to_dml <- function(mp, cf.folds = 5, cf.seed = 1) {
   validate_did_scope(mp)
 
   groups_results <- list()
@@ -391,7 +539,7 @@ did_to_dml <- function(mp) {
       next
     }
 
-    sr <- tryCatch(did_cell_short_results(mp, group, t), error = function(e) {
+    sr <- tryCatch(did_cell_short_results(mp, group, t, cf.folds = cf.folds, cf.seed = cf.seed), error = function(e) {
       warning("Skipping (group, t) = (", group, ", ", t, "): ", conditionMessage(e),
               call. = FALSE)
       NULL

@@ -10,24 +10,32 @@
 #
 # theta.s/psi.theta.s are read directly from fit$ATT/fit$att.inf.func (only
 # available if drdid_panel() was called with inffunc = TRUE). sigma2.s/
-# nu2.s are computed by reusing did_cell_nuisances()/did_cell_sigma2_nu2()
-# unchanged (R/did-adapter.R) -- those functions only ever operate on a
-# plain (D, deltaY, X, w) sample and were already generic, not
-# did::att_gt()-specific, so nothing new needed deriving for that part.
+# nu2.s are the MAIN-PAPER, control-population scale parameters
+# (sigma_0s^2 = E[Var(deltaY|X,D=0)|D=0], nu_0s^2 = E[(pi(X)/(1-pi(X)) /
+# (p/(1-p)))^2|D=0]), computed by reusing did_cell_scale_nuisances()/
+# did_cell_sigma2_nu2() unchanged (R/did-adapter.R) -- those functions only
+# ever operate on a plain (D, deltaY, X, w) sample and are already
+# generic, not did::att_gt()-specific. See R/did-adapter.R's file header
+# for the full derivation and why these are NOT the pooled sigma_s^2/
+# nu_s^2 an earlier version of this adapter computed.
 #
 # Because there is no way to independently reconstruct the sample here (the
 # way did_cell_sample() does from DIDparams$data), we can't verify on our
 # own that the caller's (D, deltaY, X, w) actually corresponds to `fit`.
-# Instead, drdid_cell_short_results() recomputes theta.s from a fresh
-# nuisance refit on the supplied sample, using DRDID::drdid_panel()'s own
-# dr.att formula (see its source), and errors if that doesn't reproduce
-# fit$ATT closely -- this is the same three-way check (att_gt() vs. direct
+# Instead, drdid_cell_short_results() recomputes theta.s from a fresh,
+# non-cross-fitted nuisance refit on the supplied sample (did_cell_
+# nuisances(), R/did-adapter.R), using DRDID::drdid_panel()'s own dr.att
+# formula (see its source), and errors if that doesn't reproduce fit$ATT
+# closely -- this is the same three-way check (att_gt() vs. direct
 # drdid_panel() vs. our own refit) that was verified by hand to match to
-# machine precision on a real mpdta cell before this was written.
+# machine precision on a real mpdta cell before this was written. This
+# validation refit is separate from, and NOT used by, the cross-fitted
+# sigma2.s/nu2.s estimator.
 #
 # Scope: panel data only (drdid_panel(), not drdid_rc()'s repeated
 # cross-section, which has a materially different estimator internally and
-# has not been derived/verified here).
+# has not been derived/verified here); unit weights only for sigma2.s/
+# nu2.s (validate_unit_weights(), R/did-adapter.R).
 
 # Checks that a DRDID fit is within the scope this adapter supports.
 validate_drdid_fit <- function(fit) {
@@ -64,7 +72,13 @@ recompute_drdid_att <- function(sample, nuis) {
 # Assembles a short.results-shaped object (matching what ate.plm()/
 # ate.npm()/did_cell_short_results() return) for a single DRDID::
 # drdid_panel() fit, given the raw sample that produced it.
-drdid_cell_short_results <- function(fit, D, deltaY, X, w = NULL, tol = 1e-6) {
+#
+# `cf.folds`/`cf.seed` control the L-fold cross-fitting used for sigma2.s/
+# nu2.s only (theta.s/psi.theta.s are external, from `fit`, and untouched).
+# Defaults match did_cell_short_results()'s, so the same cell computed via
+# both adapters (as in test-13) gets identical sigma2.s/nu2.s.
+drdid_cell_short_results <- function(fit, D, deltaY, X, w = NULL, tol = 1e-6,
+                                     cf.folds = 5, cf.seed = 1) {
   validate_drdid_fit(fit)
 
   D <- as.integer(D)
@@ -84,12 +98,20 @@ drdid_cell_short_results <- function(fit, D, deltaY, X, w = NULL, tol = 1e-6) {
   if (is.null(w)) w <- rep(1, n)
   w <- as.numeric(w) / mean(as.numeric(w))  # drdid_panel() normalizes weights the same way
 
+  # DRDID::drdid_panel() stores the trim.level it was actually called with
+  # in fit$argu$trim.level (confirmed against its source) -- read it back
+  # rather than assuming the default, so both the ATT-reproduction refit
+  # below and the active-trimming check use the SAME rule `fit` itself used.
+  trim.level <- if (!is.null(fit$argu$trim.level)) fit$argu$trim.level else 0.995
+
   sample <- list(D = D, deltaY = deltaY, X = X, w = w)
-  nuis <- did_cell_nuisances(sample)
+  nuis <- did_cell_nuisances(sample, trim.level = trim.level)
 
   # Consistency check: does refitting nuisances on this exact sample and
   # recomputing theta.s reproduce fit$ATT? If not, the supplied sample does
-  # not correspond to what produced `fit` -- see file header.
+  # not correspond to what produced `fit` -- see file header. This validation
+  # fit is separate from, and not used by, the cross-fitted sigma2.s/nu2.s
+  # estimator below.
   att.check <- recompute_drdid_att(sample, nuis)
   if (abs(att.check - fit$ATT) > tol) {
     stop("The supplied (D, deltaY, X, w) sample does not reproduce fit$ATT when ",
@@ -98,7 +120,12 @@ drdid_cell_short_results <- function(fit, D, deltaY, X, w = NULL, tol = 1e-6) {
         "drdid_panel() (including weight normalization).")
   }
 
-  comp <- did_cell_sigma2_nu2(sample, nuis)
+  # Same population-compatibility check as did_cell_short_results() (see
+  # validate_no_active_trimming() in R/did-adapter.R for why this matters).
+  validate_no_active_trimming(sample$D, nuis$p_hat, trim.level = trim.level)
+
+  scale.nuis <- did_cell_scale_nuisances(sample, L = cf.folds, seed = cf.seed)
+  comp <- did_cell_sigma2_nu2(sample, scale.nuis)
 
   theta.s <- fit$ATT
   psi.theta.s <- as.numeric(fit$att.inf.func)
@@ -130,7 +157,7 @@ drdid_cell_short_results <- function(fit, D, deltaY, X, w = NULL, tol = 1e-6) {
 # results$groups, results$main is left NULL, so the existing
 # coef.dml()/se.dml()/confint.dml()/row_only_list()/dml_bounds()/
 # robustness_value()/extreme_robustness_value() machinery works unchanged.
-drdid_to_dml <- function(fits) {
+drdid_to_dml <- function(fits, cf.folds = 5, cf.seed = 1) {
   if (!is.list(fits) || length(fits) == 0L || is.null(names(fits)) || any(names(fits) == "")) {
     stop("`fits` must be a non-empty named list, e.g. ",
         "list(my_comparison = list(fit = ..., D = ..., deltaY = ..., X = ...)).")
@@ -139,7 +166,8 @@ drdid_to_dml <- function(fits) {
   groups_results <- list()
   for (nm in names(fits)) {
     entry <- fits[[nm]]
-    sr <- drdid_cell_short_results(entry$fit, entry$D, entry$deltaY, entry$X, entry$w)
+    sr <- drdid_cell_short_results(entry$fit, entry$D, entry$deltaY, entry$X, entry$w,
+                                   cf.folds = cf.folds, cf.seed = cf.seed)
     groups_results[[nm]] <- list(sr)
   }
 
