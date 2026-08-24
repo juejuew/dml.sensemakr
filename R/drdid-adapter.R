@@ -172,7 +172,12 @@ drdid_to_dml <- function(fits, cf.folds = 5, cf.seed = 1) {
   }
 
   model <- list(
-    info = list(model = "drdid", target = NULL),
+    # `adapter` retains what's needed to re-invoke drdid_dml_benchmark() per
+    # comparison later, without the caller having to keep `fits` around
+    # separately -- used by sensemakr.dml()'s benchmark_covariates dispatch
+    # (R/sensemakr.R). See did_to_dml()'s identical field (R/did-adapter.R).
+    info = list(model = "drdid", target = NULL,
+               adapter = list(type = "drdid", fits = fits, cf.folds = cf.folds, cf.seed = cf.seed)),
     results = list(main = NULL, groups = groups_results),
     coefs = list(main = NULL, groups = lapply(groups_results, combine.cross.fits))
   )

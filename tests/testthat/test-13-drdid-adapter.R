@@ -164,3 +164,25 @@ test_that("drdid_to_dml() validates its input shape", {
   expect_error(dml.sensemakr:::drdid_to_dml(list(1, 2)), "non-empty named list")
   expect_error(dml.sensemakr:::drdid_to_dml(list(a = list(), "")), "non-empty named list")
 })
+
+test_that("sensemakr(benchmark_covariates=) benchmarks drdid output via drdid_dml_benchmark()", {
+  s <- setup_drdid$sample
+  model <- suppressWarnings(dml.sensemakr:::drdid_to_dml(list(
+    g2004_t2006 = list(fit = setup_drdid$fit, D = s$D, deltaY = s$deltaY, X = s$X, w = s$w)
+  )))
+  sens <- quietly(sensemakr(model, cf.y = 0.03, cf.d = 0.04, benchmark_covariates = "lpop"))
+
+  expect_type(sens$bench.bounds, "list")
+  expect_false(inherits(sens$bench.bounds, "dml_benchmark"))
+  expect_equal(names(sens$bench.bounds), "g2004_t2006")
+  expect_s3_class(sens$bench.bounds$g2004_t2006, "dml_benchmark")
+
+  direct <- quietly(dml.sensemakr:::drdid_dml_benchmark(
+    setup_drdid$fit, D = s$D, deltaY = s$deltaY, X = s$X, w = s$w, benchmark_covariates = "lpop"
+  ))
+  expect_equal(sens$bench.bounds$g2004_t2006$benchmarks[["lpop"]]$theta.sj,
+              direct$benchmarks[["lpop"]]$theta.sj)
+
+  quietly(expect_output(print(sens), "Benchmark Statistic for Sensitivity Scenario"))
+  quietly(expect_output(print(sens), "g2004_t2006"))
+})

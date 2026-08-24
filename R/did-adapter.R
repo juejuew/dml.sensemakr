@@ -554,7 +554,12 @@ did_to_dml <- function(mp, cf.folds = 5, cf.seed = 1) {
   }
 
   model <- list(
-    info = list(model = "did", target = NULL),
+    # `adapter` retains what's needed to re-invoke did_dml_benchmark() later
+    # without the caller having to keep `mp` around separately -- used by
+    # sensemakr.dml()'s benchmark_covariates dispatch (R/sensemakr.R). Not
+    # used anywhere else; harmless (if a little redundant) to carry along.
+    info = list(model = "did", target = NULL,
+               adapter = list(type = "did", mp = mp, cf.folds = cf.folds, cf.seed = cf.seed)),
     results = list(main = NULL, groups = groups_results),
     coefs = list(main = NULL, groups = lapply(groups_results, combine.cross.fits))
   )

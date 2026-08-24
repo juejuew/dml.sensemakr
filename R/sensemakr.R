@@ -84,11 +84,29 @@ sensemakr.dml <- function(model,
     if (!is.null(model$results$main[[1]])) {
       bench.bounds <- dml_benchmark(model = model, benchmark_covariates = benchmark_covariates)
       out$bench.bounds <- bench.bounds
+    } else if (!is.null(model$info$adapter) && identical(model$info$adapter$type, "did")) {
+      # See did_dml_benchmark() (R/adapter-benchmarks.R): refits att_gt()
+      # ENTIRELY per dropped covariate, so one dml_benchmark object per
+      # (group, t) cell -- a named list, not a single object (unlike
+      # plm/npm). print.dml.sensemakr()/summary.dml.sensemakr() know to
+      # handle both shapes.
+      out$bench.bounds <- did_dml_benchmark(model$info$adapter$mp, benchmark_covariates = benchmark_covariates,
+                                            cf.folds = model$info$adapter$cf.folds,
+                                            cf.seed = model$info$adapter$cf.seed)
+    } else if (!is.null(model$info$adapter) && identical(model$info$adapter$type, "drdid")) {
+      # See drdid_dml_benchmark() (R/adapter-benchmarks.R): one comparison
+      # per entry of the `fits` list originally passed to drdid_to_dml() --
+      # a named list of dml_benchmark objects, same shape as the did case.
+      adapter <- model$info$adapter
+      out$bench.bounds <- lapply(adapter$fits, function(entry) {
+        drdid_dml_benchmark(entry$fit, D = entry$D, deltaY = entry$deltaY, X = entry$X, w = entry$w,
+                            benchmark_covariates = benchmark_covariates,
+                            cf.folds = adapter$cf.folds, cf.seed = adapter$cf.seed)
+      })
     } else {
       warning("benchmark_covariates was provided, but benchmarking is not available for ",
-              "this model (no 'main' ATE target -- e.g. a did::att_gt() adapter object, ",
-              "which only has group-level (g,t) estimates). Skipping benchmarking; ",
-              "bench.bounds will be NULL.", call. = FALSE)
+              "this model (no 'main' ATE target and no recognized adapter source). ",
+              "Skipping benchmarking; bench.bounds will be NULL.", call. = FALSE)
     }
   }
 
@@ -133,7 +151,7 @@ print.dml.sensemakr <- function(x,
 
   if (!is.null(x$bench.bounds)) {
     cat("\nBenchmark Statistic for Sensitivity Scenario:\n")
-    print.dml_benchmark(x$bench.bounds, digits = digits)
+    print_bench_bounds(x$bench.bounds, digits = digits)
     cat("\nVerbal interpretation of Benchmark Statistic:\n\n")
     cat("-- gain.Y: the observed strength of association of the benchmark covariate with the outcome.\n")
     cat("-- gain.D: the observed strength of association of the benchmark covariate with the RR.\n")
@@ -181,7 +199,7 @@ summary.dml.sensemakr <- function(object,  digits = max(3L, getOption("digits") 
 
   if (!is.null(object$bench.bounds)) {
     cat("\nBenchmark Statistic for Sensitivity Scenario:\n")
-    print.dml_benchmark(object$bench.bounds, digits = digits)
+    print_bench_bounds(object$bench.bounds, digits = digits)
     cat("\nVerbal interpretation of Benchmark Statistic:\n\n")
     cat("-- gain.Y: the observed strength of association of the benchmark covariate with the outcome.\n")
     cat("-- gain.D: the observed strength of association of the benchmark covariate with the RR.\n")

@@ -12,7 +12,7 @@ known_noise_patterns <- c(
   "Unable to compute bounds.*nu\\^2 is negative",
   "treated unit\\(s\\) in this cell",
   "trimmed \\(propensity score",
-  "gain\\.[YD] \\(.*is negative",
+  "gain\\.[YD] \\(.*(is|are) negative",
   "Dropped.*already treated",  # did::att_gt()'s own anticipation>0 notice
   "Contour plot could not be drawn"
 )

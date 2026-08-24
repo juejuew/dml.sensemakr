@@ -344,11 +344,27 @@ test_that("plot() on did_to_dml() output errors clearly without group=TRUE, work
   expect_no_error(plot(sens, group = TRUE, group.number = 1))
 })
 
-test_that("sensemakr(benchmark_covariates=) warns rather than silently skipping for did output", {
+test_that("sensemakr(benchmark_covariates=) benchmarks did output via did_dml_benchmark()", {
+  # mp$call references mpdta by name -- did_dml_benchmark()'s per-covariate
+  # refit needs it reachable from wherever sensemakr() ends up calling
+  # eval() (see R/adapter-benchmarks.R's header), same constraint
+  # dml_benchmark() already has for plm/npm (see test-09-darfur.R).
+  data("mpdta", package = "did")
+  assign("mpdta", mpdta, envir = .GlobalEnv)
+
   model <- quietly(dml.sensemakr:::did_to_dml(setup_did$mp))
-  expect_warning(
-    sens <- sensemakr(model, cf.y = 0.03, cf.d = 0.04, benchmark_covariates = "lpop"),
-    "benchmarking is not available"
-  )
-  expect_null(sens$bench.bounds)
+  sens <- quietly(sensemakr(model, cf.y = 0.03, cf.d = 0.04, benchmark_covariates = "lpop"))
+
+  expect_type(sens$bench.bounds, "list")
+  expect_false(inherits(sens$bench.bounds, "dml_benchmark"))  # a list of them, one per (g,t) cell
+  expect_equal(names(sens$bench.bounds), names(model$results$groups))
+  expect_true(all(vapply(sens$bench.bounds, inherits, logical(1), what = "dml_benchmark")))
+
+  # cross-check against calling did_dml_benchmark() directly on the same mp
+  direct <- quietly(dml.sensemakr:::did_dml_benchmark(setup_did$mp, benchmark_covariates = "lpop"))
+  expect_equal(sens$bench.bounds$g2004_t2006$benchmarks[["lpop"]]$theta.sj,
+              direct$g2004_t2006$benchmarks[["lpop"]]$theta.sj)
+
+  quietly(expect_output(print(sens), "Benchmark Statistic for Sensitivity Scenario"))
+  quietly(expect_output(print(sens), "g2004_t2006"))
 })
