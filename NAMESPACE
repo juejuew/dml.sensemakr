@@ -13,14 +13,20 @@ S3method(plot,dml.bounds)
 S3method(plot,dml.sensemakr)
 S3method(print,cmat)
 S3method(print,confidence.bounds)
+S3method(print,did_cell_results)
 S3method(print,dml)
 S3method(print,dml.bounds)
 S3method(print,dml.sensemakr)
 S3method(print,dml_benchmark)
 S3method(print,dml_benchmark_bounds)
+S3method(print,dml_did)
+S3method(print,dml_did_cells)
+S3method(print,dml_drdid)
 S3method(print,summary_dml)
 S3method(print,summary_dml.bounds)
 S3method(print,summary_dml_benchmark)
+S3method(print,summary_dml_did)
+S3method(print,summary_dml_drdid)
 S3method(se,dml)
 S3method(se,dml.bounds)
 S3method(sensemakr,dml)
@@ -33,12 +39,18 @@ S3method(summary,dml)
 S3method(summary,dml.bounds)
 S3method(summary,dml.sensemakr)
 S3method(summary,dml_benchmark)
+S3method(summary,dml_did)
+S3method(summary,dml_drdid)
 export(benchmark_bounds)
 export(coef_plot)
 export(confidence_bounds)
+export(did_cell_apply)
 export(dml)
 export(dml_benchmark)
 export(dml_bounds)
+export(dml_from_did)
+export(dml_from_did_cells)
+export(dml_from_drdid)
 export(dml_gate)
 export(extreme_robustness_value)
 export(ovb_contour_plot)
@@ -47,20 +59,26 @@ export(se)
 export(sensemakr)
 import(caret)
 import(ggplot2)
-importFrom(caret,train)
-importFrom(caret,trainControl)
-importFrom(graphics,contour)
-importFrom(graphics,par)
-importFrom(graphics,points)
-importFrom(graphics,text)
-importFrom(stats,coef)
-importFrom(stats,confint)
-importFrom(stats,median)
-importFrom(stats,optim)
-importFrom(stats,pnorm)
-importFrom(stats,predict)
-importFrom(stats,printCoefmat)
-importFrom(stats,qnorm)
-importFrom(stats,setNames)
-importFrom(stats,var)
+importFrom(caret,
+  train,
+  trainControl
+)
+importFrom(graphics,
+  contour,
+  par,
+  points,
+  text
+)
+importFrom(stats,
+  coef,
+  confint,
+  median,
+  optim,
+  pnorm,
+  predict,
+  printCoefmat,
+  qnorm,
+  setNames,
+  var
+)
 importFrom(utils,capture.output)

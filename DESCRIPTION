@@ -1,7 +1,7 @@
 Package: dml.sensemakr
 Type: Package
 Title: Sensitivity Analysis for Debiased Machine Learning
-Version: 0.2.2
+Version: 0.2.2.9004
 Authors@R: c(
   person("Carlos", "Cinelli", role = c("aut", "cre"), email = "carloscinelli@hotmail.com"),
   person("Victor", "Chernozhukov", role = "aut"),
@@ -16,7 +16,6 @@ Encoding: UTF-8
 LazyData: true
 URL: https://github.com/carloscinelli/dml.sensemakr
 BugReports: https://github.com/carloscinelli/dml.sensemakr/issues
-RoxygenNote: 7.3.3
 Imports:
     caret,
     sensemakr,
@@ -24,6 +23,8 @@ Imports:
 Depends:
     R (>= 3.5.0)
 Suggests:
+    DRDID,
+    did,
     rmarkdown,
     knitr,
     testthat (>= 3.0.0),
@@ -39,3 +40,4 @@ Suggests:
     mlr3
 Config/testthat/edition: 3
 VignetteBuilder: knitr
+Config/roxygen2/version: 8.1.0

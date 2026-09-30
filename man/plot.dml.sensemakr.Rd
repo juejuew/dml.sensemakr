@@ -22,7 +22,8 @@
 
 \item{level}{confidence level. Default is \code{0.95}.}
 
-\item{combine.method}{method to combine the results of each repetition. Options are \code{mean} and \code{median}. Default is \code{median}.}
+\item{combine.method}{repetition aggregation; when omitted, uses the method
+saved by \code{sensemakr()} (\code{"median"} for older saved objects).}
 
 \item{...}{arguments passed to other methods.}
 }

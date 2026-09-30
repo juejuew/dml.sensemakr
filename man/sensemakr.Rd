@@ -18,7 +18,8 @@ sensemakr(model, ...)
   bound_label = "Confounding Scenario",
   theta = 0,
   alpha = 0.05,
-  ...
+  ...,
+  combine.method = c("median", "mean")
 )
 }
 \arguments{
@@ -46,6 +47,10 @@ observed gain. Default \code{1}.}
 \item{theta}{null hypothesis.}
 
 \item{alpha}{significance level.}
+
+\item{combine.method}{how to combine cross-fitting repetitions: \code{"median"}
+(default) or \code{"mean"}. Applied consistently to robustness values,
+postulated bounds and benchmark tables.}
 }
 \value{
 An object of class \code{dml.sensemakr}, containing sensitivity analysis results.

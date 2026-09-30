@@ -1,0 +1,176 @@
+---
+title: "Panel DRDID adapter: hybrid sensitivity analysis"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Panel DRDID adapter: hybrid sensitivity analysis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+`dml_from_drdid()` combines a panel DRDID ATT and its full unit-level influence
+function with cross-fitted estimates of the conditional ATT sensitivity moments.
+It returns a `dml_drdid` object inheriting from `dml`, so `dml_bounds()`,
+`confidence_bounds()`, `robustness_value()`, `sensemakr()` and `dml_benchmark()`
+can use the hybrid result.
+
+## Supported scope
+
+The adapter supports two-period balanced panels,
+`estMethod = "imp"` or `"trad"`, and constant positive sampling weights. It requires `inffunc = TRUE`. Active source trimming,
+source probability clipping, and DML probability clipping are rejected. The
+improved estimator must use successful IPT estimation (`ps.flag` 0 or 1).
+
+Repeated cross-sections, unequal sampling weights, clustered inference,
+subgroup ATTs, active trimming and joint
+bootstrap inference need separate extensions. A source fit estimated with
+bootstrap standard errors can be supplied, but the adapter reports analytic
+joint-IF inference; it does not reuse the source bootstrap draws or SE.
+
+Acceptance checks the input, required DRDID function interfaces and numerical
+ATT/IF reconstruction. DRDID **1.3.0** is tested; other versions must pass the
+same checks. Installed versions are recorded for diagnostics, not used as
+acceptance gates or evidence of the version that produced a historical fit. Reproducing the ATT
+and ordered IF is a consistency check, not independent proof of historical
+sample provenance or statistical assumptions.
+
+## Inputs and alignment
+
+For long input, supply `data` and the original outcome, time, ID and treatment
+column names, covariate formula and any weight column. Literal names and literal
+formulas can be recovered from `fit$call.param`; symbols referring to caller
+variables must be resolved explicitly by the user. There are exactly two rows
+per unit, with unique ID-time pairs and complete estimation variables. IDs and
+times are numeric, following DRDID's preprocessing requirements. Treatment,
+covariates and weights must be time invariant. The adapter uses DRDID's own
+preprocessing and canonical sorted unit order.
+Raw weights are checked before DRDID normalizes them; they must be numeric,
+finite, strictly positive and equal across all supplied rows.
+
+For wide input, supply `y1`, `y0`, `D`, `covariates`, and any `i.weights` in the
+same unit order as `att.inf.func`. The design matrix includes whatever intercept
+was used by DRDID; `covariates = NULL` denotes an intercept-only source model.
+Optional `unit_id` labels the supplied rows but cannot independently identify
+which historical row generated an influence-function entry.
+
+The adapter re-estimates DRDID and checks the ATT and **ordered** IF against the
+supplied result before estimating the sensitivity moments. It never silently
+drops observations to make a fit pass. Model-matrix columns and grouped columns
+are the units of benchmarking; an intercept column must be retained when all
+other regressors are removed.
+
+```{r, eval=FALSE}
+source_fit <- DRDID::drdid(
+  yname = "y", tname = "time", idname = "id", dname = "D",
+  xformla = ~ x1 + x2, data = panel_data,
+  panel = TRUE, estMethod = "imp", inffunc = TRUE
+)
+
+hybrid <- dml_from_drdid(
+  source_fit, data = panel_data,
+  dml_args = list(yreg = "lm", dreg = "glm", d.class = TRUE,
+                  cf.folds = 3, cf.reps = 3, cf.seed = 17, ps.trim = 0)
+)
+summary(hybrid)
+dml_bounds(hybrid, cf.y = 0.08, cf.d = 0.06)
+confidence_bounds(hybrid, cf.y = 0.08, cf.d = 0.06)
+robustness_value(hybrid)
+benchmark <- dml_benchmark(hybrid, "x2")
+benchmark_bounds(hybrid, benchmark)
+```
+
+The learners above illustrate a small correctly specified parametric example.
+They are not a universal nuisance-model recommendation. `dml_args` accepts DML
+learner specifications and training options. The adapter fixes `model = "npm"`,
+`target = "att"`, `conditional = TRUE`, `centered = FALSE`,
+`dirty.tuning = FALSE`, and `y.class = FALSE`. Hyperparameter tuning, if requested,
+therefore takes place within the training folds. The default seed is 1 and the
+default number of folds is 5. `cf.reps` defaults to 1 and accepts positive
+integers up to the DML seed-pool size of 1,000,000. Omitted `yreg` and `dreg` inherit `reg`, which
+defaults to `"ranger"`. For a constant-only design, unspecified predictor
+preprocessing is set to `"ignore"`, since range scaling has no scale to estimate.
+Explicit learner and preprocessing choices are preserved.
+A specified probability threshold is allowed only
+when it does not clip any fitted probabilities. Setting `ps.trim = 0` does not
+make boundary predictions or poor overlap acceptable.
+
+A complete simulated example for both long and wide inputs is installed at
+`system.file("examples", "drdid-adapter.R", package = "dml.sensemakr")`.
+
+## Repeated cross-fitting
+
+Set `dml_args$cf.reps` to repeat the fold partition. Every repetition keeps the
+same external ATT and IF and uses its own DML sensitivity moments and joint
+covariance. No repetition is silently discarded: an invalid fold, active
+trimming or invalid moment rejects the fit.
+
+`results$main$treat[[r]]`, `fits[[r]]` and `auxiliary_dml_results$main$treat[[r]]`
+refer to repetition `r`. `adapter_info$rep_seeds` records all seeds;
+`fold_id` is a unit-by-repetition matrix when `cf.reps > 1` and remains a vector
+for one repetition. `dml.att` records each auxiliary ATT before replacement.
+Benchmarks refit both estimators on the same units and every saved partition.
+
+Use `combine.method = "median"` (default) or `"mean"` with `confidence_bounds()`,
+`robustness_value()`, `sensemakr()` and benchmark summaries/bounds. Each endpoint
+is computed per repetition before aggregation. For endpoints `b_r` and SEs `s_r`,
+the mean rule reports `mean(b_r)` with SE
+`sqrt(mean(s_r^2 + (b_r - mean(b_r))^2))`; the median rule replaces both means by
+medians. There is no division by the repetition count. The unchanged source ATT
+and its analytic SE therefore remain unchanged under either rule.
+
+## Joint inference
+
+Write the short ATT as $\theta_s$, residual variance as $a=\sigma_{0,s}^2$,
+and conditional imbalance as $b=\nu_{0,s}^2$. With $S^2=ab$, the adapter uses
+
+$$
+\phi_{S^2,i}=b\phi_{a,i}+a\phi_{b,i},\qquad
+\widehat V=\frac{1}{n^2}\sum_i(\phi_i-\bar\phi)(\phi_i-\bar\phi)',
+\quad\phi_i=(\phi_{\theta,i},\phi_{a,i},\phi_{b,i})'.
+$$
+
+The external DRDID IF is an unscaled unit-level contribution. It is neither
+divided by $n$ before assembly nor replaced by the DML ATT IF. For a fixed
+sensitivity factor $k=\sqrt{\rho^2\,cf.y\,cf.d/(1-cf.d)}$, the endpoint IFs are
+$\phi_{\theta,i}\pm k\phi_{S^2,i}/(2\sqrt{S^2})$. Their standard errors include
+the cross-covariance between the external ATT and the sensitivity moments.
+
+`confidence_bounds()` defaults to the envelope over all confounding no stronger
+than the supplied sensitivity values. Use `max = FALSE` for the interval at
+exactly those values. Its `level` parameter supplies the one-sided normal
+quantile: at zero sensitivity, `level = 0.95` uses `qnorm(0.95)`; use
+`level = 0.975` to recover the usual two-sided 95% normal interval. Accordingly,
+the source ATT and analytic SE, rather than the original CI endpoints, are the
+zero-sensitivity invariant.
+
+Valid hybrid inference requires jointly asymptotically linear estimators on
+the same units and target population, appropriate moments and overlap, and
+valid nuisance estimation on each side. DRDID's double robustness for the short
+ATT does **not** imply double robustness for the entire sensitivity analysis.
+The DML outcome and propensity functions used by the sensitivity moments need
+their own consistency/rate conditions. Causal interpretation also requires the
+long-model identifying and sensitivity assumptions in the DiD paper.
+
+## Object structure and benchmarks
+
+| Component | Content |
+|---|---|
+| `results$main$treat[[1]]` | Hybrid estimates, IFs, and `joint.covariance` in order ATT, residual variance, imbalance |
+| `coefs$main$treat` | External ATT and analytic IF standard error |
+| `fits` | Cross-fitted DML nuisance predictions |
+| `auxiliary_dml_results` | Original DML results retained for diagnostics |
+| `external_fit` | Supplied DRDID object |
+| `adapter_data` | Frozen wide panel data, IDs, weights, design matrix and input mapping |
+| `adapter_info` | Source method, reconstruction version, fold IDs and source propensity diagnostics |
+| `refit_spec` | Source settings and DML options used for benchmark refits |
+
+The source propensities in `adapter_info$diagnostics$propensity` are reconstructed
+for verification; they are not propensities extracted from the DRDID output or
+the cross-fitted DML propensity predictions.
+
+Each benchmark removes the named design columns and re-estimates **both** DRDID
+and the DML sensitivity moments, using the frozen units and the same fold seed.
+The reduced ATT and IF therefore remain DRDID quantities. This works after
+`saveRDS()`/`readRDS()` without evaluating the original source or adapter call.
+Learner specifications must themselves remain usable after serialization.
+Benchmark group labels must be unique, including labels generated for unnamed
+groups. Duplicate labels produce an error before any benchmark is fitted.

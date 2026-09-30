@@ -527,6 +527,8 @@ dml <- function(y, d, x,
 ##' @rdname dml
 ##' @export
 dml_gate <- function(dml.fit, groups,...){
+  if (inherits(dml.fit, c("dml_drdid", "dml_did")))
+    stop("Group effects need corresponding external ATT estimates; dml_gate() is not supported for hybrid panel fits.", call. = FALSE)
   call2 <- match.call()
   groups  <- as.factor(groups)
   model    <- dml.fit$info$model

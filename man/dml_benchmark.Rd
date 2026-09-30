@@ -15,7 +15,8 @@ on its own), or a named list where each element is a character vector of
 column names to drop \emph{together} in the refit (e.g. the
 dummy columns of a factor: \code{list(region = c("region3", "region4"))}).
 List element names become the row labels; unnamed elements are labelled by
-the column name (singletons) or the columns joined by \code{"+"}.}
+the column name (singletons) or the columns joined by \code{"+"}.
+The resulting group names must be unique.}
 
 \item{dreg, yreg}{optional learner specifications (as in \code{\link{dml}}) for
 the \emph{refit}, overriding those stored in \code{model$call}.}

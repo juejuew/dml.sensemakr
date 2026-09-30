@@ -9,6 +9,7 @@
 ##'   dummy columns of a factor: \code{list(region = c("region3", "region4"))}).
 ##'   List element names become the row labels; unnamed elements are labelled by
 ##'   the column name (singletons) or the columns joined by \code{"+"}.
+##'   The resulting group names must be unique.
 ##' @param dreg,yreg optional learner specifications (as in \code{\link{dml}}) for
 ##'   the \emph{refit}, overriding those stored in \code{model$call}.
 ##' @returns An object of class \code{dml_benchmark} containing benchmark results.
@@ -411,6 +412,9 @@ bench_fun <- function(model, benchmark_covariates, dreg = NULL, yreg = NULL){
     if (is.na(grp_names[i]) || grp_names[i] == "")
       grp_names[i] <- if (length(cols) == 1L) cols else paste(cols, collapse = "+")
   }
+  if (anyDuplicated(grp_names))
+    stop("Benchmark group names must be unique; choose distinct labels for each group.",
+         call. = FALSE)
   names(covariate_groups) <- grp_names
 
   all.cols  <- unlist(covariate_groups, use.names = FALSE)
@@ -439,17 +443,23 @@ bench_fun <- function(model, benchmark_covariates, dreg = NULL, yreg = NULL){
     cat("\n=== Computing benchmarks using covariate:", covar, " ===\n\n")
     index.o <- which(colnames(x) %in% cols)   # drop all columns in the group
     xo <- x[, -index.o, drop = FALSE]
-    model.call <- model$call
-    model.call[["x"]] <- quote(xo)
-    if (!is.null(dreg)) model.call[["dreg"]] <- dreg   # pin refit treatment learner
-    if (!is.null(yreg)) model.call[["yreg"]] <- yreg   # pin refit outcome learner
-    # evaluate the stored call where the user originally made it (with the
-    # reduced covariate matrix spliced in), so their variables -- including any
-    # named `x`, `yreg`, or `dreg` -- resolve to their objects, not our locals
-    eval.env <- new.env(parent = if (is.environment(model$call.env))
-                                   model$call.env else globalenv())
-    eval.env$xo <- xo
-    model.wo <- eval(model.call, eval.env)
+    if (inherits(model, "dml_did")) {
+      model.wo <- .did_benchmark_refit(model, xo, dreg = dreg, yreg = yreg)
+    } else if (inherits(model, "dml_drdid")) {
+      model.wo <- .drdid_benchmark_refit(model, xo, dreg = dreg, yreg = yreg)
+    } else {
+      model.call <- model$call
+      model.call[["x"]] <- quote(xo)
+      if (!is.null(dreg)) model.call[["dreg"]] <- dreg   # pin refit treatment learner
+      if (!is.null(yreg)) model.call[["yreg"]] <- yreg   # pin refit outcome learner
+      # evaluate the stored call where the user originally made it (with the
+      # reduced covariate matrix spliced in), so their variables -- including any
+      # named `x`, `yreg`, or `dreg` -- resolve to their objects, not our locals
+      eval.env <- new.env(parent = if (is.environment(model$call.env))
+                                     model$call.env else globalenv())
+      eval.env$xo <- xo
+      model.wo <- eval(model.call, eval.env)
+    }
 
     nu.sq.wo <- extract_estimate(model.wo$results$main[[slot]], param = "nu2.s")
     sigma.sq.wo <- extract_estimate(model.wo$results$main[[slot]], param = "sigma2.s")

@@ -192,3 +192,59 @@ plot(sens.401k)
 
 This project was partially supported by the Royalty Research Fund at the
 University of Washington, and by the National Science Foundation.
+
+## Panel DRDID adapter
+
+The development adapter `dml_from_drdid()` accepts a compatible DRDID panel fit
+with `inffunc = TRUE` and the corresponding estimation data. It preserves the
+external ATT and full influence function, estimates conditional ATT sensitivity
+moments with cross-fitted DML, and includes their joint covariance in inference.
+
+```r
+hybrid <- dml_from_drdid(
+  source_fit, data = panel_data,
+  yname = "y", tname = "time", idname = "id", dname = "D",
+  xformla = ~ x1 + x2,
+  dml_args = list(yreg = "lm", dreg = "glm", d.class = TRUE,
+                  cf.folds = 3, cf.seed = 17, ps.trim = 0)
+)
+confidence_bounds(hybrid, cf.y = 0.08, cf.d = 0.06)
+robustness_value(hybrid)
+dml_benchmark(hybrid, benchmark_covariates = "x2")
+```
+
+Initial support is restricted to balanced two-period panels, equal weights,
+`imp`/`trad` and no active propensity trimming/clipping. Repeated cross-fitting is available through `dml_args = list(cf.reps = 5)`.
+Both estimators are refit for each benchmark. See
+[the adapter guide](vignettes/drdid-adapter.Rmd) for assumptions, input alignment
+and inference conventions, and the
+[complete runnable example](inst/examples/drdid-adapter.R).
+
+## did group-time ATT adapter
+
+`dml_from_did()` adapts one post-treatment `ATT(g,t)` from `did::att_gt()`.
+It reads the saved estimation data, preserves the source ATT and correctly
+rescaled IF, and estimates sensitivity moments with cross-fitted DML.
+
+```r
+hybrid <- dml_from_did(source_fit, group = 5, time = 9,
+                       dml_args = list(cf.reps = 5))
+confidence_bounds(hybrid, cf.y = 0.05, cf.d = 0.05)
+benchmark <- dml_benchmark(hybrid, "z")
+
+batch <- dml_from_did_cells(source_fit)
+intervals <- did_cell_apply(batch, confidence_bounds, cf.y = 0.05, cf.d = 0.05)
+intervals$status  # includes failed cells and their reasons
+```
+
+Compatibility is based on saved inputs, DRDID interfaces and numerical ATT/IF
+reconstruction, not version equality. Tested with **did 2.5.1 / 2.5.1.902** and
+**DRDID 1.3.0**. Required scope: `est_method = "dr"`, saved IFs, balanced panel estimation,
+constant positive weights and inactive trimming. Both `faster_mode` settings,
+both control groups, anticipation and both base-period settings are supported.
+`fix_weights = "varying"`, repeated cross-sections, coarser clustering and
+`aggte()` need separate extensions. Inference is analytic and cellwise. All repetitions retain the source ATT and
+IF; mean/median aggregation does not divide its variance by the number of splits.
+
+See `vignette("did-adapter")` and the runnable
+[example](inst/examples/did-adapter.R) for installation and batch usage.

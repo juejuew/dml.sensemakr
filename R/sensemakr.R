@@ -24,6 +24,9 @@ sensemakr <- function(model, ...) {
 ##' @param bound_label label to bounds provided manually in \code{cf.y} and \code{cf.d}.
 ##' @param theta null hypothesis.
 ##' @param alpha significance level.
+##' @param combine.method how to combine cross-fitting repetitions: \code{"median"}
+##'   (default) or \code{"mean"}. Applied consistently to robustness values,
+##'   postulated bounds and benchmark tables.
 ##'
 ##' @examples
 ##' # loads package
@@ -58,8 +61,10 @@ sensemakr.dml <- function(model,
                           rho2 = 1,
                           kD = 1, kY = kD,
                           bound_label = "Confounding Scenario",
-                          theta = 0, alpha = 0.05, ...){
+                          theta = 0, alpha = 0.05, ...,
+                          combine.method = c("median", "mean")){
 
+  combine.method <- match.arg(combine.method)
   out <- list()
 
   out$info <- list(cf.y = cf.y,
@@ -67,14 +72,15 @@ sensemakr.dml <- function(model,
                    rho2 = rho2,
                    bound.label = bound_label,
                    theta = theta,
-                   alpha = alpha)
+                   alpha = alpha,
+                   combine.method = combine.method)
 
   # original model
   out$model <- model
 
   # robustness values
-  rv   <- robustness_value(model, theta = theta, alpha = 1)
-  rva  <- robustness_value(model, theta = theta, alpha = alpha)
+  rv   <- robustness_value(model, theta = theta, alpha = 1, combine.method = combine.method)
+  rva  <- robustness_value(model, theta = theta, alpha = alpha, combine.method = combine.method)
   rvs <- cbind(rv, rva)
   out$sensitivity_stats <- rvs
 
@@ -85,10 +91,11 @@ sensemakr.dml <- function(model,
   rows <- NULL
 
   if (!is.null(cf.y)) {
-    conf.bounds <- confidence_bounds(model, cf.y = cf.y, cf.d = cf.d, rho2 = rho2)
+    conf.bounds <- confidence_bounds(model, cf.y = cf.y, cf.d = cf.d, rho2 = rho2,
+                                      level = 1 - alpha, combine.method = combine.method)
     out$conf.bounds <- conf.bounds       # kept for backward compatibility
     pt <- dml_bounds(model, cf.y = cf.y, cf.d = cf.d, rho2 = rho2)
-    cf <- coef(pt)
+    cf <- coef(pt, combine.method = combine.method)
     tg <- rownames(conf.bounds)
     rows <- data.frame(target = tg,
                        bound.label = bound_label,
@@ -114,13 +121,14 @@ sensemakr.dml <- function(model,
       bench <- dml_benchmark(model = model,
                              benchmark_covariates = benchmark_covariates)
       out$bench.bounds <- bench
-      gains <- summary(bench)$benchmarks
+      gains <- summary(bench, combine.method = combine.method)$benchmarks
       kD.v  <- kD
       kY.v  <- rep_len(kY, length(kD.v))
       bt    <- NULL
       for (i in seq_along(kD.v)) {
         bb <- as.data.frame(benchmark_bounds(model, bench,
-                                             kY = kY.v[i], kD = kD.v[i]))
+                                             kY = kY.v[i], kD = kD.v[i],
+                                             level = 1 - alpha, combine.method = combine.method))
         bt <- rbind(bt, data.frame(
           target = model$info$target,
           bound.label = if (kY.v[i] == kD.v[i]) {
@@ -151,6 +159,11 @@ sensemakr.dml <- function(model,
 
 }
 
+.sensemakr_combine_method <- function(object) {
+  method <- object$info$combine.method
+  if (is.null(method)) "median" else method
+}
+
 ##' Sensitivity analysis print and summary methods for \code{dml.sensemakr}
 ##'
 ##' @description
@@ -168,7 +181,7 @@ print.dml.sensemakr <- function(x,
                                 ...) {
 
   cat("==== Original Analysis ====\n")
-  print(x$model)
+  print(x$model, combine.method = .sensemakr_combine_method(x))
 
   cat("==== Sensitivity Analysis ====\n\n")
   cat("Null hypothesis:", "theta =", x$info$theta,"\n")
@@ -197,7 +210,7 @@ print.dml.sensemakr <- function(x,
 ##' @rdname print.dml.sensemakr
 summary.dml.sensemakr <- function(object,  digits = max(3L, getOption("digits") - 3L), ...) {
   cat("==== Original Analysis ====\n")
-  print(summary(object$model), digits = digits, ...)
+  print(summary(object$model, combine.method = .sensemakr_combine_method(object)), digits = digits, ...)
   cat("\n\n")
 
   cat("==== Sensitivity Analysis ====\n\n")
@@ -259,6 +272,8 @@ summary.dml.sensemakr <- function(object,  digits = max(3L, getOption("digits") 
 ##' @param x an object of class \code{dml.sensemakr} created with the \code{\link{sensemakr}} function.
 ##' @param parameter the target parameter to plot. Options are \code{"ate"}, \code{"att"}, and \code{"atu"}.
 ##' @inheritParams ovb_contour_plot
+##' @param combine.method repetition aggregation; when omitted, uses the method
+##'   saved by \code{sensemakr()} (\code{"median"} for older saved objects).
 ##' @returns No return value, called for side effects (plotting).
 ##' @export
 plot.dml.sensemakr <- function(x,
@@ -267,6 +282,7 @@ plot.dml.sensemakr <- function(x,
                                level = 0.95,
                                combine.method = "median",
                                ...){
+  if (missing(combine.method)) combine.method <- .sensemakr_combine_method(x)
   # default to the fit's own (single) target, mirroring ovb_contour_plot.dml
   if (missing(parameter) && length(x$model$info$target) >= 1L &&
       x$model$info$target[1] %in% c("ate", "att", "atu")) {

@@ -1,11 +1,12 @@
-library(sensemakr)
 library(dml.sensemakr)
 
 test_that("Testing 401k PLM", {
   set.seed(12)
 
   # loads dataset
-  data("darfur")
+  # Loading the data must not mask dml.sensemakr's sensitivity generics in
+  # later test files by attaching the separate sensemakr package.
+  data("darfur", package = "sensemakr")
 
   # runs regression model
   model <- lm(peacefactor ~ directlyharmed + age + farmer_dar + herder_dar +
