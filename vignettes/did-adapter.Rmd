@@ -8,8 +8,9 @@ vignette: >
 ---
 
 `dml_from_did()` converts a post-treatment cell from `did::att_gt()` into a
-`dml_did` object inheriting from `dml`. The original ATT and IF are retained;
-DML estimates the two sensitivity moments on the same cell sample.
+`dml_did` object inheriting from `dml` when sampling weights are equal. The
+original ATT and IF are retained, and DML estimates the two sensitivity moments.
+Unequal positive weights trigger a full unweighted DML refit instead.
 
 ## Versions and supported estimates
 
@@ -19,15 +20,17 @@ diagnostics, not used as acceptance gates. This release is tested with did
 **2.5.1** and **2.5.1.902**, and DRDID **1.3.0**. Other versions must provide the
 same required information and pass the same checks. Missing fields are not
 filled with assumed defaults. A saved MP object can be adapted without did
-installed; DRDID remains necessary for reconstruction.
+installed; DRDID is needed for the equal-weight hybrid reconstruction.
 
 ```{r install, eval=FALSE}
 # Install missing dependencies; did 2.5.1 from CRAN is supported.
 install.packages(c("did", "DRDID"))
 ```
 
-Supported: balanced panel estimation with `est_method = "dr"`,
-`compute_inffunc = TRUE`, constant positive weights and inactive trimming.
+Supported: balanced panel estimation with `est_method = "dr"` and positive
+finite weights. The hybrid path requires `compute_inffunc = TRUE`, constant
+weights and inactive trimming. The unequal-weight path estimates all quantities
+with DML and does not require the source IF.
 Both control groups, both computation modes, anticipation and both base-period
 settings are supported. A balanced panel retained after did's cleaning is valid.
 The `allow_unbalanced_panel` input alone does not determine the estimator path;
@@ -36,7 +39,7 @@ the saved `DIDparams$panel` does.
 Not supported: actual unbalanced or repeated-cross-section estimation,
 `fix_weights = "varying"` (which invokes an RC estimator), other/custom
 estimators, pre-treatment/reference cells, clustering above individuals,
-active trimming, or `aggte()` objects. The source bootstrap may be enabled,
+`aggte()` objects, or active trimming on the hybrid path. The source bootstrap may be enabled,
 but sensitivity inference uses analytic joint IFs, not its bootstrap SEs or
 simultaneous critical values.
 
@@ -51,7 +54,7 @@ base-period rows, preserving global factor levels and transform bases. Its
 formula environment and contrast settings must remain compatible with the fit.
 Do not edit the saved source data or tensors.
 
-If the source has `N` units and the cell has `n` units, did stores
+On the hybrid path, if the source has `N` units and the cell has `n` units, did stores
 `(N / n) * IF_cell` in the cell's column. The adapter matches IF row names to
 unit IDs and multiplies by `n / N`. Cell membership comes from the saved data,
 not from testing which IF entries are nonzero. DRDID reconstruction must reproduce
@@ -61,6 +64,25 @@ The three IF vectors (ATT, residual variance, imbalance) determine the joint
 covariance and sensitivity-bound standard errors. Statistical validity still
 requires the estimators' identification, overlap and nuisance conditions.
 Reconstruction checks do not establish those assumptions.
+
+## Unequal sampling weights
+
+When the saved data have unequal positive weights, `dml_from_did()` warns and
+fits the selected cell as if every unit had equal weight. It calls `dml()` on
+the outcome change, treatment indicator and base-period design. The ATT, IF and
+sensitivity components are all reestimated; the original weighted result is
+not used. The sample is the processed panel saved in `DIDparams$data`.
+
+The result has ordinary class `dml`, so benchmarking also refits DML. Its
+`adapter_info$mode` is `"unweighted_dml"`, `adapter_info$source_weights` stores
+the original cell weights, and `adapter_info$dml_args` gives the resolved
+settings. With the same ordered data, settings and seed, the numerical results
+match a direct unweighted `dml()` fit. Native DML's `ps.trim` behavior applies.
+No extra adapter argument is needed. Batches retain the warning in `status`.
+
+This analyzes the unweighted cell ATT. It does not extend the sensitivity
+formulas to the original sampling-weighted estimand. All other panel, estimator
+and clustering restrictions above remain in place.
 
 ## Runnable example
 

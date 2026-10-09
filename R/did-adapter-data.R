@@ -3,7 +3,6 @@
 .did_adapter_context <- function(fit) {
   # An installed version is diagnostic metadata, not the producer of a saved fit.
   version <- .adapter_package_version("did")
-  drdid.version <- .drdid_require()
   if (!is.list(fit) || !inherits(fit, "MP"))
     .drdid_stop("fit must be an MP object from did::att_gt(); aggte() is not supported.")
   dp <- fit$DIDparams
@@ -53,12 +52,19 @@
   cohorts <- gg[rows[[1L]]]
   if (any(vapply(rows, function(r) !identical(gg[r], cohorts), logical(1))))
     .drdid_stop("Cohort membership changes within a saved panel unit.")
+  unequal.weights <- FALSE
+  check.weights <- function(w) {
+    if (!is.numeric(w) || length(w) != nrow(dat) || any(!is.finite(w)) || any(w <= 0))
+      .drdid_stop("Saved sampling weights must be finite and positive, with one value per row.")
+    any(w != w[1L])
+  }
   if (!is.null(dp$weightsname)) {
     if (!dp$weightsname %in% names(dat)) .drdid_stop("The saved sampling-weight column is missing.")
-    .drdid_check_weights(dat[[dp$weightsname]], nrow(dat))
+    unequal.weights <- check.weights(dat[[dp$weightsname]])
   }
   if (!".w" %in% names(dat)) .drdid_stop("The saved normalized sampling weights are missing.")
-  .drdid_check_weights(dat$.w, nrow(dat))
+  unequal.weights <- check.weights(dat$.w) || unequal.weights
+  drdid.version <- if (unequal.weights) .adapter_package_version("DRDID") else .drdid_require()
   if (!inherits(dp$xformla, "formula") || length(dp$xformla) != 2L)
     .drdid_stop("The saved xformla must be a one-sided formula.")
   saved.times <- if (dp$faster_mode) dp$time_periods else dp$tlist
@@ -71,14 +77,18 @@
       length(fit$group) != m || length(fit$t) != m || any(!is.finite(c(fit$group, fit$t))) ||
       anyDuplicated(data.frame(group = fit$group, time = fit$t)))
     .drdid_stop("The source ATT cells must have unique, finite group-time labels.")
-  inf <- fit$inffunc
-  if (is.null(inf)) .drdid_stop("The source has no IF. Refit did::att_gt() with compute_inffunc = TRUE.")
-  if (length(dim(inf)) != 2L || !identical(as.integer(dim(inf)), c(as.integer(N), as.integer(m))))
-    .drdid_stop("The source IF dimensions do not match its units and ATT cells.")
-  inf.ids <- rownames(inf)
-  if (is.null(inf.ids) || anyNA(inf.ids) || anyDuplicated(inf.ids) ||
-      !setequal(inf.ids, as.character(ids)))
-    .drdid_stop("The source IF must have unique row names matching the saved unit IDs.")
+  if.rows <- NULL
+  if (!unequal.weights) {
+    inf <- fit$inffunc
+    if (is.null(inf)) .drdid_stop("The source has no IF. Refit did::att_gt() with compute_inffunc = TRUE.")
+    if (length(dim(inf)) != 2L || !identical(as.integer(dim(inf)), c(as.integer(N), as.integer(m))))
+      .drdid_stop("The source IF dimensions do not match its units and ATT cells.")
+    inf.ids <- rownames(inf)
+    if (is.null(inf.ids) || anyNA(inf.ids) || anyDuplicated(inf.ids) ||
+        !setequal(inf.ids, as.character(ids)))
+      .drdid_stop("The source IF must have unique row names matching the saved unit IDs.")
+    if.rows <- match(as.character(ids), inf.ids)
+  }
   # The fast path saves the exact global design basis. The slow path builds
   # model.matrix once on ALL retained periods before selecting a cell.
   if (dp$faster_mode) {
@@ -120,7 +130,7 @@
     X[[k]] <- mat
   }
   list(fit = fit, dp = dp, data = dat, ids = ids, times = times, rows = rows,
-       cohorts = cohorts, X = X, if.rows = match(as.character(ids), inf.ids),
+       cohorts = cohorts, X = X, if.rows = if.rows, unweighted.refit = unequal.weights,
        N = N, version = version, drdid.version = drdid.version,
        layout = if (dp$faster_mode) "panel_tensors" else "panel_formula")
 }
@@ -132,7 +142,8 @@
   j <- which(ctx$fit$group == group & ctx$fit$t == time)
   if (length(j) != 1L) .drdid_stop("The requested (group, time) cell is absent from the MP object.")
   theta <- ctx$fit$att[j]
-  if (!is.finite(theta)) .drdid_stop("The requested cell has no finite source ATT.")
+  if (!ctx$unweighted.refit && !is.finite(theta))
+    .drdid_stop("The requested cell has no finite source ATT.")
   pre <- which(ctx$times + ctx$dp$anticipation < group)
   if (!length(pre)) .drdid_stop("The requested cohort has no valid pre-treatment base period.")
   pre <- utils::tail(pre, 1L); post <- match(time, ctx$times)
@@ -144,15 +155,7 @@
   take <- which(treated | control)
   D <- as.numeric(treated[take]); n <- length(take)
   if (n < 4L || length(unique(D)) != 2L) .drdid_stop("The cell needs both treated and control units.")
-  phi.full <- as.numeric(ctx$fit$inffunc[, j])
-  if (length(phi.full) != ctx$N || any(!is.finite(phi.full)))
-    .drdid_stop("The selected source IF column must be finite.")
   if.rows <- ctx$if.rows[take]
-  outside <- setdiff(seq_len(ctx$N), if.rows)
-  if (any(abs(phi.full[outside]) > 1e-10))
-    .drdid_stop("The source IF has nonzero contributions outside the reconstructed cell.")
-  # did stores (N / n_cell) * phi_cell. Undo this before cell-level DML.
-  phi <- (n / ctx$N) * phi.full[if.rows]
   w.period <- if (identical(ctx$dp$fix_weights, "first_period")) 1L else pre
   y <- ctx$data[[ctx$dp$yname]]
   sample <- list(y1 = y[ctx$rows[[post]][take]], y0 = y[ctx$rows[[pre]][take]],
@@ -163,10 +166,21 @@
                    times = ctx$times[c(pre, post)], source_rows = list(
                      pre = ctx$rows[[pre]][take], post = ctx$rows[[post]][take])))
   sample$i.weights <- sample$i.weights / mean(sample$i.weights)
+  cell <- list(group = group, time = time, base_period = ctx$times[pre],
+               column = j, n_cell = n, n_global = ctx$N, if_rows = if.rows,
+               if_scale = if (ctx$unweighted.refit) NULL else n / ctx$N)
+  if (ctx$unweighted.refit) return(list(sample = sample, cell = cell))
+
+  phi.full <- as.numeric(ctx$fit$inffunc[, j])
+  if (length(phi.full) != ctx$N || any(!is.finite(phi.full)))
+    .drdid_stop("The selected source IF column must be finite.")
+  outside <- setdiff(seq_len(ctx$N), if.rows)
+  if (any(abs(phi.full[outside]) > 1e-10))
+    .drdid_stop("The source IF has nonzero contributions outside the reconstructed cell.")
+  # did stores (N / n_cell) * phi_cell. Undo this before cell-level DML.
+  phi <- (n / ctx$N) * phi.full[if.rows]
   spec <- list(method = "trad", trim.level = 0.995, phi = phi)
   diagnostics <- .panel_check_source(theta, sample, spec)
   list(sample = sample, theta = theta, phi = phi, diagnostics = diagnostics,
-       cell = list(group = group, time = time, base_period = ctx$times[pre],
-                   column = j, n_cell = n, n_global = ctx$N, if_rows = if.rows,
-                   if_scale = n / ctx$N))
+       cell = cell)
 }

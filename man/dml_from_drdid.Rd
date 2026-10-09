@@ -63,9 +63,9 @@ replayed to check its consistency with the supplied, ordered estimation data.
 \details{
 Supports panel `imp` and `trad`, equal weights, successful source
   estimation, and no active source or DML propensity trimming/clipping.
-Acceptance uses the input structure, the required DRDID function interfaces,
-and a numerical ATT/IF replay, not an installed-version equality check.
-DRDID 1.3.0 is tested; other versions must satisfy these same checks.
+  Acceptance uses the input structure, the required DRDID function interfaces,
+  and a numerical ATT/IF replay, not an installed-version equality check.
+  DRDID 1.3.0 is tested; other versions must satisfy these same checks.
   Valid inference additionally requires compatible asymptotic linearity,
   nuisance convergence, overlap and moment conditions. Reconstruction checks
   cannot prove model correctness or certify the provenance of historical data.

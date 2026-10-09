@@ -253,7 +253,9 @@ test_that("unsupported source paths and inconsistent inputs fail explicitly", {
     expect_error(run(varying), "repeated-cross-section")
     w <- dat; w$w <- 1 + w$id / max(w$id)
     weighted <- did_adapter_fit(w, faster_mode = fast, weightsname = "w")
-    expect_error(run(weighted), "constant positive")
+    expect_warning(refit <- run(weighted), "Unequal sampling weights")
+    expect_identical(class(refit), "dml")
+    expect_identical(refit$adapter_info$mode, "unweighted_dml")
   }
 })
 

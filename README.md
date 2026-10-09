@@ -223,8 +223,13 @@ and inference conventions, and the
 ## did group-time ATT adapter
 
 `dml_from_did()` adapts one post-treatment `ATT(g,t)` from `did::att_gt()`.
-It reads the saved estimation data, preserves the source ATT and correctly
-rescaled IF, and estimates sensitivity moments with cross-fitted DML.
+It reads the saved estimation data. With equal weights, it preserves the source
+ATT and correctly rescaled IF and estimates sensitivity moments with DML.
+With unequal positive weights, it warns and refits the whole cell with equal
+weights using native `dml()`, including the ATT and IF. The returned ordinary
+`dml` object supports native reporting and benchmarking; its
+`adapter_info$mode` is `"unweighted_dml"`. This is an unweighted analysis of the
+retained sample, not sensitivity analysis for the original weighted ATT.
 
 ```r
 hybrid <- dml_from_did(source_fit, group = 5, time = 9,
@@ -239,11 +244,13 @@ intervals$status  # includes failed cells and their reasons
 
 Compatibility is based on saved inputs, DRDID interfaces and numerical ATT/IF
 reconstruction, not version equality. Tested with **did 2.5.1 / 2.5.1.902** and
-**DRDID 1.3.0**. Required scope: `est_method = "dr"`, saved IFs, balanced panel estimation,
-constant positive weights and inactive trimming. Both `faster_mode` settings,
+**DRDID 1.3.0**. Both paths require `est_method = "dr"`, balanced panel estimation
+and positive finite weights. The hybrid path also requires saved IFs and inactive
+trimming; the unweighted path refits all quantities and uses native DML clipping.
+Both `faster_mode` settings,
 both control groups, anticipation and both base-period settings are supported.
 `fix_weights = "varying"`, repeated cross-sections, coarser clustering and
-`aggte()` need separate extensions. Inference is analytic and cellwise. All repetitions retain the source ATT and
+`aggte()` need separate extensions. Inference is analytic and cellwise. Hybrid repetitions retain the source ATT and
 IF; mean/median aggregation does not divide its variance by the number of splits.
 
 See `vignette("did-adapter")` and the runnable

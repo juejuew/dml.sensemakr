@@ -7,9 +7,9 @@
 dml_from_did(fit, group, time, dml_args = list())
 }
 \arguments{
-\item{fit}{An \code{MP} object from \code{did::att_gt()}, estimated with \code{est_method = "dr"}
-and saved influence functions (\code{compute_inffunc = TRUE}). Requires DRDID
-with compatible panel estimation and propensity interfaces.}
+\item{fit}{An \code{MP} object from \code{did::att_gt()}, estimated with \code{est_method = "dr"}.
+The equal-weight hybrid path requires saved influence functions
+(\code{compute_inffunc = TRUE}) and compatible DRDID panel interfaces.}
 
 \item{group, time}{Numeric cohort and outcome-period labels of one estimated
 post-treatment cell (\code{time >= group}).}
@@ -17,28 +17,43 @@ post-treatment cell (\code{time >= group}).}
 \item{dml_args}{Named list of DML settings; see \code{\link[=dml_from_drdid]{dml_from_drdid()}}.}
 }
 \value{
-A \code{dml_did} object inheriting from \code{dml}. \code{adapter_data} contains the
-frozen two-period panel; \code{adapter_info$cell} records the cell labels, base
-period, cell/global sample sizes, original IF row indices and scale factor.
+With equal weights, a \code{dml_did} object inheriting from \code{dml}. With
+unequal weights, an ordinary \code{dml} object with native DML refitting behavior.
+Both contain \code{adapter_data} (the frozen two-period panel), \code{external_fit}
+(the original MP object), and \code{adapter_info$cell} (cell labels, base period
+and sample sizes). \code{adapter_info$mode} is \code{"hybrid"} or \code{"unweighted_dml"}.
+Source IF row indices and scale are recorded only for hybrid fits.
 }
 \description{
-Uses the estimation data saved by \code{did::att_gt()}, preserves the selected
-ATT and its influence function, and estimates sensitivity moments by DML.
+Uses the estimation data saved by \code{did::att_gt()}. With equal sampling weights,
+preserves the selected ATT and IF and estimates sensitivity moments by DML.
+With unequal weights, refits the entire cell using unweighted DML.
 }
 \details{
 Supports the balanced panel estimator path, either control group,
 either base-period setting, anticipation, and both \code{faster_mode} settings.
-Compatibility is checked from the saved data, settings, design and labeled
+Hybrid compatibility is checked from the saved data, settings, design and labeled
 IF, and by reproducing the cell ATT and ordered IF. Installed package versions
 are diagnostic metadata, not acceptance gates or evidence of the producer
 version. Tested with did 2.5.1 and 2.5.1.902 and DRDID 1.3.0. Missing required
 information or incompatible runtime interfaces still causes an error.
-Sampling weights must be constant and positive in the retained data.
-Active source trimming or DML probability clipping, coarser clustering,
-repeated cross-sections, \code{fix_weights = "varying"}, custom estimators,
-pre-treatment cells and \code{aggte()} objects are not supported.
+Sampling weights must be finite and positive. If unequal weights occur in
+the retained data, the adapter warns and treats all selected units equally.
+It calls \code{\link[=dml]{dml()}} to estimate the ATT, its IF and all sensitivity components
+anew, without using or requiring the original ATT/IF. Numerical results
+match direct unweighted \code{dml()} on the same ordered cell data with the same
+resolved DML settings and seed; the settings are in \code{adapter_info$dml_args}.
+Original cell weights are in \code{adapter_info$source_weights}. This changes
+the weighting of the estimand and is not weighted sensitivity analysis.
+The refit uses the processed sample saved by did and cannot restore rows
+removed by its original cleaning.
 
-The source stores \code{(N / n_cell) * IF_cell}. Row names align units; multiplying
+Active source trimming or DML clipping is rejected on the hybrid path.
+The unweighted refit follows native \code{dml()} behavior, including \code{ps.trim}.
+Coarser clustering, repeated cross-sections, \code{fix_weights = "varying"},
+custom estimators, pre-treatment cells and \code{aggte()} remain unsupported.
+
+For the hybrid path, the source stores \code{(N / n_cell) * IF_cell}. Row names align units; multiplying
 by \code{n_cell / N} recovers the cell IF. A DRDID reconstruction checks both the
 original ATT and this ordered IF. Fast mode uses the saved design tensors;
 slow mode reevaluates the formula on all saved periods before subsetting.
@@ -50,13 +65,14 @@ bootstrap SEs and simultaneous critical values are not reused. Validity
 requires the identifying and nuisance conditions of the estimators. These
 checks establish computational consistency, not model correctness.
 
-\code{\link[=dml_benchmark]{dml_benchmark()}} refits DRDID and DML on the same cell and folds after
-removing design columns. \code{\link[=did_cell_apply]{did_cell_apply()}} applies sensitivity or benchmark
+\code{\link[=dml_benchmark]{dml_benchmark()}} refits DRDID and DML for hybrid fits, and DML alone for
+unweighted refits, after removing design columns on the same cell and folds.
+\code{\link[=did_cell_apply]{did_cell_apply()}} applies sensitivity or benchmark
 functions across a batch; its intervals remain cellwise, not simultaneous.
-\code{dml_args$cf.reps} enables repeated cross-fitting (default 1). Each repetition
+\code{dml_args$cf.reps} enables repeated cross-fitting (default 1). For hybrid fits, each repetition
 uses the same source ATT/IF and its own sensitivity moments and joint IF
 covariance; downstream methods retain their mean/median aggregation.
-A failure in any repetition rejects that cell. \code{adapter_info$fold_id} is a
+A failure in any hybrid repetition rejects that cell. Its \code{adapter_info$fold_id} is a
 vector for one repetition or a unit-by-repetition matrix otherwise;
 \code{rep_seeds} and \code{dml.att} contain one value per repetition.
 }

@@ -1,3 +1,12 @@
+# dml.sensemakr 0.2.2.9005
+
+* For did objects with unequal positive sampling weights, automatically refit
+  the selected cell with equal weights using native DML. Warn that the original
+  weighted ATT and IF are not used, and record the mode and original weights.
+* Return an ordinary `dml` object on this path so reporting, repeated fitting,
+  serialization and benchmarking use the same calculations as direct DML.
+  Equal-weight inputs retain the existing hybrid behavior.
+
 # dml.sensemakr 0.2.2.9004
 
 * Replace did/DRDID version equality gates with saved-input and runtime-interface

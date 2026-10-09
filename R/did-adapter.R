@@ -1,30 +1,45 @@
 #' Adapt a did group-time ATT for sensitivity analysis
 #'
-#' Uses the estimation data saved by `did::att_gt()`, preserves the selected
-#' ATT and its influence function, and estimates sensitivity moments by DML.
+#' Uses the estimation data saved by `did::att_gt()`. With equal sampling weights,
+#' preserves the selected ATT and IF and estimates sensitivity moments by DML.
+#' With unequal weights, refits the entire cell using unweighted DML.
 #'
-#' @param fit An `MP` object from `did::att_gt()`, estimated with `est_method = "dr"`
-#'   and saved influence functions (`compute_inffunc = TRUE`). Requires DRDID
-#'   with compatible panel estimation and propensity interfaces.
+#' @param fit An `MP` object from `did::att_gt()`, estimated with `est_method = "dr"`.
+#'   The equal-weight hybrid path requires saved influence functions
+#'   (`compute_inffunc = TRUE`) and compatible DRDID panel interfaces.
 #' @param group,time Numeric cohort and outcome-period labels of one estimated
 #'   post-treatment cell (`time >= group`).
 #' @param dml_args Named list of DML settings; see [dml_from_drdid()].
-#' @return A `dml_did` object inheriting from `dml`. `adapter_data` contains the
-#'   frozen two-period panel; `adapter_info$cell` records the cell labels, base
-#'   period, cell/global sample sizes, original IF row indices and scale factor.
+#' @return With equal weights, a `dml_did` object inheriting from `dml`. With
+#'   unequal weights, an ordinary `dml` object with native DML refitting behavior.
+#'   Both contain `adapter_data` (the frozen two-period panel), `external_fit`
+#'   (the original MP object), and `adapter_info$cell` (cell labels, base period
+#'   and sample sizes). `adapter_info$mode` is `"hybrid"` or `"unweighted_dml"`.
+#'   Source IF row indices and scale are recorded only for hybrid fits.
 #' @details Supports the balanced panel estimator path, either control group,
 #'   either base-period setting, anticipation, and both `faster_mode` settings.
-#'   Compatibility is checked from the saved data, settings, design and labeled
+#'   Hybrid compatibility is checked from the saved data, settings, design and labeled
 #'   IF, and by reproducing the cell ATT and ordered IF. Installed package versions
 #'   are diagnostic metadata, not acceptance gates or evidence of the producer
 #'   version. Tested with did 2.5.1 and 2.5.1.902 and DRDID 1.3.0. Missing required
 #'   information or incompatible runtime interfaces still causes an error.
-#'   Sampling weights must be constant and positive in the retained data.
-#'   Active source trimming or DML probability clipping, coarser clustering,
-#'   repeated cross-sections, `fix_weights = "varying"`, custom estimators,
-#'   pre-treatment cells and `aggte()` objects are not supported.
+#'   Sampling weights must be finite and positive. If unequal weights occur in
+#'   the retained data, the adapter warns and treats all selected units equally.
+#'   It calls [dml()] to estimate the ATT, its IF and all sensitivity components
+#'   anew, without using or requiring the original ATT/IF. Numerical results
+#'   match direct unweighted `dml()` on the same ordered cell data with the same
+#'   resolved DML settings and seed; the settings are in `adapter_info$dml_args`.
+#'   Original cell weights are in `adapter_info$source_weights`. This changes
+#'   the weighting of the estimand and is not weighted sensitivity analysis.
+#'   The refit uses the processed sample saved by did and cannot restore rows
+#'   removed by its original cleaning.
 #'
-#'   The source stores `(N / n_cell) * IF_cell`. Row names align units; multiplying
+#'   Active source trimming or DML clipping is rejected on the hybrid path.
+#'   The unweighted refit follows native `dml()` behavior, including `ps.trim`.
+#'   Coarser clustering, repeated cross-sections, `fix_weights = "varying"`,
+#'   custom estimators, pre-treatment cells and `aggte()` remain unsupported.
+#'
+#'   For the hybrid path, the source stores `(N / n_cell) * IF_cell`. Row names align units; multiplying
 #'   by `n_cell / N` recovers the cell IF. A DRDID reconstruction checks both the
 #'   original ATT and this ordered IF. Fast mode uses the saved design tensors;
 #'   slow mode reevaluates the formula on all saved periods before subsetting.
@@ -36,13 +51,14 @@
 #'   requires the identifying and nuisance conditions of the estimators. These
 #'   checks establish computational consistency, not model correctness.
 #'
-#'   [dml_benchmark()] refits DRDID and DML on the same cell and folds after
-#'   removing design columns. [did_cell_apply()] applies sensitivity or benchmark
+#'   [dml_benchmark()] refits DRDID and DML for hybrid fits, and DML alone for
+#'   unweighted refits, after removing design columns on the same cell and folds.
+#'   [did_cell_apply()] applies sensitivity or benchmark
 #'   functions across a batch; its intervals remain cellwise, not simultaneous.
-#'   `dml_args$cf.reps` enables repeated cross-fitting (default 1). Each repetition
+#'   `dml_args$cf.reps` enables repeated cross-fitting (default 1). For hybrid fits, each repetition
 #'   uses the same source ATT/IF and its own sensitivity moments and joint IF
 #'   covariance; downstream methods retain their mean/median aggregation.
-#'   A failure in any repetition rejects that cell. `adapter_info$fold_id` is a
+#'   A failure in any hybrid repetition rejects that cell. Its `adapter_info$fold_id` is a
 #'   vector for one repetition or a unit-by-repetition matrix otherwise;
 #'   `rep_seeds` and `dml.att` contain one value per repetition.
 #' @seealso [dml_from_did_cells()], [did_cell_apply()], [dml_from_drdid()]
@@ -51,13 +67,14 @@
 dml_from_did <- function(fit, group, time, dml_args = list()) {
   ctx <- .did_adapter_context(fit)
   out <- .did_fit_cell(ctx, group, time, dml_args)
-  out$call <- match.call()
+  if (inherits(out, "dml_did")) out$call <- match.call()
+  else out$adapter_call <- match.call()
   out
 }
 
 .did_fit_cell <- function(ctx, group, time, dml_args) {
   src <- .did_cell_sample(ctx, group, time)
-  info <- list(source = "did", reconstruction.version = ctx$version,
+  info <- list(source = "did", mode = "hybrid", reconstruction.version = ctx$version,
                 DRDID.version = ctx$drdid.version, estMethod = "dr (DRDID trad)",
                 compatibility = list(basis = "saved structure and ATT/IF replay", layout = ctx$layout),
                 inference = "analytic joint IF", cell = src$cell,
@@ -66,6 +83,26 @@ dml_from_did <- function(fit, group, time, dml_args = list()) {
                 faster_mode = ctx$dp$faster_mode, fix_weights = ctx$dp$fix_weights,
                 original.se = ctx$fit$se[src$cell$column],
                 original.boot = ctx$dp$bstrap, original.cband = ctx$dp$cband)
+  if (ctx$unweighted.refit) {
+    warning("Unequal sampling weights detected: refitting this cell with equal weights using DML; the original ATT and IF are not used.",
+            call. = FALSE)
+    sample <- src$sample
+    args <- .drdid_dml_args(dml_args, length(sample$D))
+    # Keep dml's own estimates, IFs, class, call and call environment. Native
+    # benchmarking will therefore refit DML rather than the source estimator.
+    out <- do.call(dml, c(list(y = sample$y1 - sample$y0, d = sample$D, x = sample$X), args))
+    info$mode <- "unweighted_dml"
+    info$estMethod <- "DML (equal-weight refit)"
+    info$compatibility$basis <- "saved data and design"
+    info$inference <- "analytic DML IF"
+    info$source_weights <- sample$i.weights
+    info$dml_args <- args
+    sample$i.weights <- rep(1, length(sample$D))
+    out$adapter_data <- sample
+    out$adapter_info <- info
+    out$external_fit <- ctx$fit
+    return(out)
+  }
   .did_assemble(src$sample, src$theta, src$phi, src$diagnostics, info,
                 ctx$fit, dml_args)
 }

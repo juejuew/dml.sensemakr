@@ -12,9 +12,9 @@ dml_from_did_cells(
 )
 }
 \arguments{
-\item{fit}{An \code{MP} object from \code{did::att_gt()}, estimated with \code{est_method = "dr"}
-and saved influence functions (\code{compute_inffunc = TRUE}). Requires DRDID
-with compatible panel estimation and propensity interfaces.}
+\item{fit}{An \code{MP} object from \code{did::att_gt()}, estimated with \code{est_method = "dr"}.
+The equal-weight hybrid path requires saved influence functions
+(\code{compute_inffunc = TRUE}) and compatible DRDID panel interfaces.}
 
 \item{cells}{A data.frame with numeric \code{group} and \code{time} columns and unique
 rows. NULL selects all post-treatment cells in source order, including cells
