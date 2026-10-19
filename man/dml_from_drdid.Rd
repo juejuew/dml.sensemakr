@@ -19,7 +19,8 @@ dml_from_drdid(
   covariates = NULL,
   i.weights = NULL,
   unit_id = NULL,
-  dml_args = list()
+  dml_args = list(),
+  method = c("crossfit", "parametric")
 )
 }
 \arguments{
@@ -49,7 +50,12 @@ supplied order and do not independently establish the original IF mapping.}
 \item{dml_args}{Named list of DML options, such as learners, `cf.folds`,
 `cf.reps`, `cf.seed` and `ps.trim`. Repetitions default to 1. The estimand
 and clean tuning are fixed. Every repetition must pass the overlap checks;
-active probability clipping is not supported.}
+active probability clipping is not supported.
+Must be empty for `method = "parametric"`.}
+
+\item{method}{`"crossfit"` (default) or `"parametric"`. The parametric method
+currently requires the traditional estimator (`estMethod = "trad"`) and
+uses its full-sample logistic-MLE/OLS nuisance fits without cross-fitting.}
 }
 \value{
 A `dml_drdid` object inheriting from `dml`, with the external fit,
@@ -57,7 +63,8 @@ A `dml_drdid` object inheriting from `dml`, with the external fit,
 }
 \description{
 Retains the external ATT and influence function and estimates the residual
-variance and conditional imbalance using cross-fitted DML. The source fit is
+variance and conditional imbalance using cross-fitted DML (default) or
+full-sample logistic/OLS fitting. The source fit is
 replayed to check its consistency with the supplied, ordered estimation data.
 }
 \details{
@@ -78,4 +85,16 @@ Supports panel `imp` and `trad`, equal weights, successful source
   rejects the fit. `adapter_info$fold_id` is a vector for one repetition or a
   unit-by-repetition matrix otherwise; `rep_seeds` records the DML seeds and
   `dml.att` contains the auxiliary ATT for every repetition.
+
+  The parametric method preserves the external ATT and IF and computes new
+  sensitivity moments with full-sample nuisance estimation effects in the
+  joint IF. It requires regular fixed-dimensional fits, overlap and finite
+  moments; the sensitivity interpretation additionally requires the relevant
+  nuisance functions to be correctly specified. A sandwich correction does
+  not correct model misspecification. These conditions also apply to reduced
+  benchmark models. Parametric fits store `info$cf.folds = 0L`, one result,
+  empty fold/seed metadata and `adapter_info$mode = "parametric"`. They contain
+  `parametric` fit diagnostics and result-level `nuisance.correction` vectors.
+  Benchmarks retain the method and reject learner overrides. See
+  `inst/notes/parametric-inference.md` in the source package for the derivation.
 }

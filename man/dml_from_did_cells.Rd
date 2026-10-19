@@ -8,7 +8,8 @@ dml_from_did_cells(
   fit,
   cells = NULL,
   dml_args = list(),
-  on_error = c("record", "stop")
+  on_error = c("record", "stop"),
+  method = c("crossfit", "parametric")
 )
 }
 \arguments{
@@ -20,11 +21,17 @@ The equal-weight hybrid path requires saved influence functions
 rows. NULL selects all post-treatment cells in source order, including cells
 whose estimation failed. Pre-treatment cells are listed in \code{excluded}.}
 
-\item{dml_args}{Named list of DML settings; see \code{\link[=dml_from_drdid]{dml_from_drdid()}}.}
+\item{dml_args}{Named list of DML settings; see \code{\link[=dml_from_drdid]{dml_from_drdid()}}.
+Must be empty for \code{method = "parametric"}.}
 
 \item{on_error}{\code{"record"} keeps an error message and a NULL entry for each
 failed cell; \code{"stop"} stops at the first failure. Invalid source objects or
 invalid selection syntax always stop before fitting.}
+
+\item{method}{\code{"crossfit"} (default) retains the existing cross-fitted method.
+\code{"parametric"} uses the source cell's full-sample logistic MLE and control-arm
+linear regression, with no sample splitting. Requires equal weights and no
+active source trimming/clipping. It never switches to an unweighted refit.}
 }
 \value{
 A \code{dml_did_cells} object with \code{models} (one entry per selected cell),

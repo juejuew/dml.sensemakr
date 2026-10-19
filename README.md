@@ -223,6 +223,7 @@ and inference conventions, and the
 ## did group-time ATT adapter
 
 `dml_from_did()` adapts one post-treatment `ATT(g,t)` from `did::att_gt()`.
+The following describes the default `method = "crossfit"` path.
 It reads the saved estimation data. With equal weights, it preserves the source
 ATT and correctly rescaled IF and estimates sensitivity moments with DML.
 With unequal positive weights, it warns and refits the whole cell with equal
@@ -255,3 +256,30 @@ IF; mean/median aggregation does not divide its variance by the number of splits
 
 See `vignette("did-adapter")` and the runnable
 [example](inst/examples/did-adapter.R) for installation and batch usage.
+
+### Full-sample parametric mode
+
+For equal-weight traditional panel estimates, use the source logistic-MLE/OLS
+models for sensitivity moments without cross-fitting:
+
+```r
+parametric <- dml_from_did(source_fit, group = 5, time = 9,
+                           method = "parametric")
+confidence_bounds(parametric, cf.y = 0.05, cf.d = 0.05)
+dml_benchmark(parametric, "z")
+batch <- dml_from_did_cells(source_fit, method = "parametric")
+```
+
+This retains the original ATT and unit IF and includes full-sample nuisance
+estimation effects in the new moment IFs and joint covariance. It does not
+reproduce a source bootstrap SE. Leave `dml_args` empty: there are no folds,
+seeds or learner choices. Benchmark refits retain the same parametric method.
+Unequal weights, active trimming/clipping and the improved DRDID estimator
+are unsupported on this path. The traditional `dml_from_drdid()` interface
+also accepts `method = "parametric"`.
+
+The sensitivity interpretation requires suitable model correctness, overlap,
+moment and regularity conditions, including for reduced benchmark models.
+Reproducing the source numerically does not establish those conditions.
+See the [derivation and assumptions](inst/notes/parametric-inference.md) and
+the [runnable example](inst/examples/did-parametric.R).

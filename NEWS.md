@@ -1,3 +1,19 @@
+# dml.sensemakr 0.2.2.9006
+
+* Add `method = "parametric"` to did single-cell/batch and traditional DRDID
+  panel adapters. Keep `method = "crossfit"` as the default.
+* Preserve the external ATT/IF and reconstruct full-sample logistic MLE and
+  control-arm OLS with the source solvers and saved design. Compute new
+  conditional sensitivity moments without cross-fitting or random seeds.
+* Include nuisance estimating-equation effects in the moment IFs and joint
+  covariance. Document the derivation, sufficient assumptions and limits of
+  sensitivity interpretation under misspecification, including benchmarks.
+* Retain the parametric method when benchmarking after serialization. Reject
+  unequal weights, active source trimming, improved DRDID fits and DML/learner
+  overrides on this new path. Existing cross-fitted paths retain their behavior.
+* Add source-reproduction, numerical IF differentiation, downstream inference,
+  serialized benchmark, batch and rejection tests and a runnable did example.
+
 # dml.sensemakr 0.2.2.9005
 
 * For did objects with unequal positive sampling weights, automatically refit

@@ -4,7 +4,13 @@
 \alias{dml_from_did}
 \title{Adapt a did group-time ATT for sensitivity analysis}
 \usage{
-dml_from_did(fit, group, time, dml_args = list())
+dml_from_did(
+  fit,
+  group,
+  time,
+  dml_args = list(),
+  method = c("crossfit", "parametric")
+)
 }
 \arguments{
 \item{fit}{An \code{MP} object from \code{did::att_gt()}, estimated with \code{est_method = "dr"}.
@@ -14,20 +20,29 @@ The equal-weight hybrid path requires saved influence functions
 \item{group, time}{Numeric cohort and outcome-period labels of one estimated
 post-treatment cell (\code{time >= group}).}
 
-\item{dml_args}{Named list of DML settings; see \code{\link[=dml_from_drdid]{dml_from_drdid()}}.}
+\item{dml_args}{Named list of DML settings; see \code{\link[=dml_from_drdid]{dml_from_drdid()}}.
+Must be empty for \code{method = "parametric"}.}
+
+\item{method}{\code{"crossfit"} (default) retains the existing cross-fitted method.
+\code{"parametric"} uses the source cell's full-sample logistic MLE and control-arm
+linear regression, with no sample splitting. Requires equal weights and no
+active source trimming/clipping. It never switches to an unweighted refit.}
 }
 \value{
 With equal weights, a \code{dml_did} object inheriting from \code{dml}. With
 unequal weights, an ordinary \code{dml} object with native DML refitting behavior.
 Both contain \code{adapter_data} (the frozen two-period panel), \code{external_fit}
 (the original MP object), and \code{adapter_info$cell} (cell labels, base period
-and sample sizes). \code{adapter_info$mode} is \code{"hybrid"} or \code{"unweighted_dml"}.
-Source IF row indices and scale are recorded only for hybrid fits.
+and sample sizes). \code{adapter_info$mode} is \code{"hybrid"}, \code{"parametric"} or
+\code{"unweighted_dml"}. Source IF row indices and scale are recorded for the
+two source-preserving modes. Parametric results include \code{parametric}
+(coefficients, gradients, assumptions) and each result's \code{nuisance.correction}.
 }
 \description{
 Uses the estimation data saved by \code{did::att_gt()}. With equal sampling weights,
-preserves the selected ATT and IF and estimates sensitivity moments by DML.
-With unequal weights, refits the entire cell using unweighted DML.
+preserves the selected ATT and IF and estimates sensitivity moments using
+cross-fitting (default) or full-sample parametric fitting. With unequal weights,
+the default method refits the entire cell using unweighted DML.
 }
 \details{
 Supports the balanced panel estimator path, either control group,
@@ -37,7 +52,7 @@ IF, and by reproducing the cell ATT and ordered IF. Installed package versions
 are diagnostic metadata, not acceptance gates or evidence of the producer
 version. Tested with did 2.5.1 and 2.5.1.902 and DRDID 1.3.0. Missing required
 information or incompatible runtime interfaces still causes an error.
-Sampling weights must be finite and positive. If unequal weights occur in
+Sampling weights must be finite and positive. With the default method, if unequal weights occur in
 the retained data, the adapter warns and treats all selected units equally.
 It calls \code{\link[=dml]{dml()}} to estimate the ATT, its IF and all sensitivity components
 anew, without using or requiring the original ATT/IF. Numerical results
@@ -65,8 +80,23 @@ bootstrap SEs and simultaneous critical values are not reused. Validity
 requires the identifying and nuisance conditions of the estimators. These
 checks establish computational consistency, not model correctness.
 
+The parametric method uses DRDID's actual logistic-MLE/OLS solvers and the
+saved cell design. It retains the source ATT/IF and computes new sensitivity
+moments: these moments are not quantities originally returned by did.
+Joint inference includes the full-sample nuisance estimation effects via
+estimating-equation derivatives. Its usual sensitivity interpretation
+requires correct nuisance functions, regular fixed-dimensional models,
+overlap, finite moments and the original identifying conditions. Sandwich
+corrections do not repair a misspecified sensitivity target. Each reduced
+benchmark model needs its own nuisance validity conditions.
+Parametric fits are deterministic and store \code{info$cf.folds = 0L}, one result,
+empty \code{fold_id}/\code{rep_seeds}, and no auxiliary DML estimates. Benchmarking
+refits the same logistic/OLS procedure on the frozen cell and rejects learner
+overrides. See \code{inst/notes/parametric-inference.md} in the source package.
+
 \code{\link[=dml_benchmark]{dml_benchmark()}} refits DRDID and DML for hybrid fits, and DML alone for
 unweighted refits, after removing design columns on the same cell and folds.
+Parametric fits refit the source estimator and full-sample sensitivity moments.
 \code{\link[=did_cell_apply]{did_cell_apply()}} applies sensitivity or benchmark
 functions across a batch; its intervals remain cellwise, not simultaneous.
 \code{dml_args$cf.reps} enables repeated cross-fitting (default 1). For hybrid fits, each repetition

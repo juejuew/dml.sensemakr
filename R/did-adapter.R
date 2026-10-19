@@ -1,8 +1,9 @@
 #' Adapt a did group-time ATT for sensitivity analysis
 #'
 #' Uses the estimation data saved by `did::att_gt()`. With equal sampling weights,
-#' preserves the selected ATT and IF and estimates sensitivity moments by DML.
-#' With unequal weights, refits the entire cell using unweighted DML.
+#' preserves the selected ATT and IF and estimates sensitivity moments using
+#' cross-fitting (default) or full-sample parametric fitting. With unequal weights,
+#' the default method refits the entire cell using unweighted DML.
 #'
 #' @param fit An `MP` object from `did::att_gt()`, estimated with `est_method = "dr"`.
 #'   The equal-weight hybrid path requires saved influence functions
@@ -10,12 +11,19 @@
 #' @param group,time Numeric cohort and outcome-period labels of one estimated
 #'   post-treatment cell (`time >= group`).
 #' @param dml_args Named list of DML settings; see [dml_from_drdid()].
+#'   Must be empty for `method = "parametric"`.
+#' @param method `"crossfit"` (default) retains the existing cross-fitted method.
+#'   `"parametric"` uses the source cell's full-sample logistic MLE and control-arm
+#'   linear regression, with no sample splitting. Requires equal weights and no
+#'   active source trimming/clipping. It never switches to an unweighted refit.
 #' @return With equal weights, a `dml_did` object inheriting from `dml`. With
 #'   unequal weights, an ordinary `dml` object with native DML refitting behavior.
 #'   Both contain `adapter_data` (the frozen two-period panel), `external_fit`
 #'   (the original MP object), and `adapter_info$cell` (cell labels, base period
-#'   and sample sizes). `adapter_info$mode` is `"hybrid"` or `"unweighted_dml"`.
-#'   Source IF row indices and scale are recorded only for hybrid fits.
+#'   and sample sizes). `adapter_info$mode` is `"hybrid"`, `"parametric"` or
+#'   `"unweighted_dml"`. Source IF row indices and scale are recorded for the
+#'   two source-preserving modes. Parametric results include `parametric`
+#'   (coefficients, gradients, assumptions) and each result's `nuisance.correction`.
 #' @details Supports the balanced panel estimator path, either control group,
 #'   either base-period setting, anticipation, and both `faster_mode` settings.
 #'   Hybrid compatibility is checked from the saved data, settings, design and labeled
@@ -23,7 +31,7 @@
 #'   are diagnostic metadata, not acceptance gates or evidence of the producer
 #'   version. Tested with did 2.5.1 and 2.5.1.902 and DRDID 1.3.0. Missing required
 #'   information or incompatible runtime interfaces still causes an error.
-#'   Sampling weights must be finite and positive. If unequal weights occur in
+#'   Sampling weights must be finite and positive. With the default method, if unequal weights occur in
 #'   the retained data, the adapter warns and treats all selected units equally.
 #'   It calls [dml()] to estimate the ATT, its IF and all sensitivity components
 #'   anew, without using or requiring the original ATT/IF. Numerical results
@@ -51,8 +59,23 @@
 #'   requires the identifying and nuisance conditions of the estimators. These
 #'   checks establish computational consistency, not model correctness.
 #'
+#'   The parametric method uses DRDID's actual logistic-MLE/OLS solvers and the
+#'   saved cell design. It retains the source ATT/IF and computes new sensitivity
+#'   moments: these moments are not quantities originally returned by did.
+#'   Joint inference includes the full-sample nuisance estimation effects via
+#'   estimating-equation derivatives. Its usual sensitivity interpretation
+#'   requires correct nuisance functions, regular fixed-dimensional models,
+#'   overlap, finite moments and the original identifying conditions. Sandwich
+#'   corrections do not repair a misspecified sensitivity target. Each reduced
+#'   benchmark model needs its own nuisance validity conditions.
+#'   Parametric fits are deterministic and store `info$cf.folds = 0L`, one result,
+#'   empty `fold_id`/`rep_seeds`, and no auxiliary DML estimates. Benchmarking
+#'   refits the same logistic/OLS procedure on the frozen cell and rejects learner
+#'   overrides. See `inst/notes/parametric-inference.md` in the source package.
+#'
 #'   [dml_benchmark()] refits DRDID and DML for hybrid fits, and DML alone for
 #'   unweighted refits, after removing design columns on the same cell and folds.
+#'   Parametric fits refit the source estimator and full-sample sensitivity moments.
 #'   [did_cell_apply()] applies sensitivity or benchmark
 #'   functions across a batch; its intervals remain cellwise, not simultaneous.
 #'   `dml_args$cf.reps` enables repeated cross-fitting (default 1). For hybrid fits, each repetition
@@ -64,15 +87,20 @@
 #' @seealso [dml_from_did_cells()], [did_cell_apply()], [dml_from_drdid()]
 #' @md
 #' @export
-dml_from_did <- function(fit, group, time, dml_args = list()) {
+dml_from_did <- function(fit, group, time, dml_args = list(),
+                          method = c("crossfit", "parametric")) {
+  method <- match.arg(method)
+  if (method == "parametric") .panel_parametric_args(dml_args)
   ctx <- .did_adapter_context(fit)
-  out <- .did_fit_cell(ctx, group, time, dml_args)
+  out <- .did_fit_cell(ctx, group, time, dml_args, method)
   if (inherits(out, "dml_did")) out$call <- match.call()
   else out$adapter_call <- match.call()
   out
 }
 
-.did_fit_cell <- function(ctx, group, time, dml_args) {
+.did_fit_cell <- function(ctx, group, time, dml_args, method = "crossfit") {
+  if (method == "parametric" && ctx$unweighted.refit)
+    .drdid_stop("method = 'parametric' requires equal sampling weights; it does not silently switch to an unweighted DML refit.")
   src <- .did_cell_sample(ctx, group, time)
   info <- list(source = "did", mode = "hybrid", reconstruction.version = ctx$version,
                 DRDID.version = ctx$drdid.version, estMethod = "dr (DRDID trad)",
@@ -104,21 +132,29 @@ dml_from_did <- function(fit, group, time, dml_args = list()) {
     return(out)
   }
   .did_assemble(src$sample, src$theta, src$phi, src$diagnostics, info,
-                ctx$fit, dml_args)
+                ctx$fit, dml_args, method)
 }
 
-.did_assemble <- function(sample, theta, phi, diagnostics, info, external_fit, dml_args) {
-  hybrid <- .panel_hybrid_aux(sample, theta, phi, dml_args)
+.did_assemble <- function(sample, theta, phi, diagnostics, info, external_fit,
+                           dml_args, method = "crossfit") {
+  source <- list(method = "trad", trim.level = 0.995)
+  hybrid <- if (method == "parametric")
+    .panel_parametric_aux(sample, theta, phi, source, diagnostics) else
+    .panel_hybrid_aux(sample, theta, phi, dml_args)
   out <- hybrid$fit
   out$external_fit <- external_fit
   out$adapter_data <- sample
   out$adapter_info <- c(info, list(unit_id = sample$unit_id, fold_id = hybrid$fold,
     rep_seeds = hybrid$rep_seeds,
-    diagnostics = diagnostics,
-    dml.att = vapply(out$auxiliary_dml_results$main$treat,
-                     function(r) r$estimates$theta.s, numeric(1))))
-  out$refit_spec <- list(source = list(method = "trad", trim.level = 0.995),
-                         dml_args = hybrid$args)
+    diagnostics = diagnostics))
+  if (method == "parametric") {
+    out$adapter_info$mode <- "parametric"
+    out$adapter_info$inference <- out$parametric$inference
+  } else {
+    out$adapter_info$dml.att <- vapply(out$auxiliary_dml_results$main$treat,
+                                      function(r) r$estimates$theta.s, numeric(1))
+  }
+  out$refit_spec <- list(source = source, dml_args = hybrid$args, method = method)
   out$call <- NULL
   out$call.env <- NULL
   class(out) <- c("dml_did", "dml")
@@ -127,6 +163,10 @@ dml_from_did <- function(fit, group, time, dml_args = list()) {
 
 .did_benchmark_refit <- function(model, x, dreg = NULL, yreg = NULL) {
   if (!ncol(x)) .drdid_stop("A benchmark must retain at least one design column; retain the intercept for an unconditional refit.")
+  method <- model$refit_spec$method
+  if (is.null(method)) method <- "crossfit"
+  if (method == "parametric" && (!is.null(dreg) || !is.null(yreg)))
+    .drdid_stop("Parametric benchmarks use the source logistic/OLS models; dreg/yreg overrides are not supported.")
   sample <- model$adapter_data
   sample$X <- x
   source <- .drdid_refit_source(sample, model$refit_spec$source)
@@ -142,7 +182,7 @@ dml_from_did <- function(fit, group, time, dml_args = list()) {
   info$original.cband <- FALSE
   info$benchmark.refit <- TRUE
   # The reduced estimator is a fresh DRDID fit on the frozen cell, not an MP.
-  out <- .did_assemble(sample, source$ATT, spec$phi, diagnostics, info, source, args)
+  out <- .did_assemble(sample, source$ATT, spec$phi, diagnostics, info, source, args, method)
   .panel_check_benchmark_alignment(model, out)
   out
 }
@@ -163,8 +203,11 @@ dml_from_did <- function(fit, group, time, dml_args = list()) {
 #' @md
 #' @export
 dml_from_did_cells <- function(fit, cells = NULL, dml_args = list(),
-                                on_error = c("record", "stop")) {
+                                on_error = c("record", "stop"),
+                                method = c("crossfit", "parametric")) {
   on_error <- match.arg(on_error)
+  method <- match.arg(method)
+  if (method == "parametric") .panel_parametric_args(dml_args)
   ctx <- .did_adapter_context(fit)
   all.cells <- data.frame(group = fit$group, time = fit$t)
   default <- is.null(cells)
@@ -176,12 +219,12 @@ dml_from_did_cells <- function(fit, cells = NULL, dml_args = list(),
       any(!is.finite(c(cells$group, cells$time))) || anyDuplicated(cells))
     .drdid_stop("Select at least one cell with unique, finite numeric group-time labels.")
   # Catch malformed DML options once, independently of per-cell estimation.
-  .drdid_dml_args(dml_args, ctx$N)
+  if (method == "crossfit") .drdid_dml_args(dml_args, ctx$N)
   labels <- .did_cell_labels(cells)
   status <- .did_status_table(cells, labels)
   models <- stats::setNames(vector("list", nrow(cells)), labels)
   for (i in seq_len(nrow(cells))) {
-    ans <- .did_capture(function() .did_fit_cell(ctx, cells$group[i], cells$time[i], dml_args))
+    ans <- .did_capture(function() .did_fit_cell(ctx, cells$group[i], cells$time[i], dml_args, method))
     if (!is.null(ans$error) && on_error == "stop")
       .drdid_stop(labels[i], ": ", ans$error)
     models[i] <- list(ans$value)
@@ -269,7 +312,10 @@ summary.dml_did <- function(object, combine.method = "median", ...) {
 #' @export
 print.summary_dml_did <- function(x, ...) {
   cell <- x$adapter_info$cell
-  cat("Hybrid did ATT(", cell$group, ", ", cell$time, ") sensitivity fit\n", sep = "")
+  parametric <- identical(x$adapter_info$mode, "parametric")
+  cat(if (parametric) "Parametric did ATT(" else "Hybrid did ATT(",
+      cell$group, ", ", cell$time, ") sensitivity fit\n", sep = "")
+  if (parametric) cat("Full-sample logistic/OLS; no cross-fitting\n")
   cat("Base period: ", cell$base_period, "; cell units: ", cell$n_cell,
       "; inference: analytic joint IF\n\n", sep = "")
   print(x$main)

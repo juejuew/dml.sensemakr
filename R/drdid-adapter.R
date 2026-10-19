@@ -1,7 +1,8 @@
 #' Adapt a panel DRDID estimate for conditional ATT sensitivity analysis
 #'
 #' Retains the external ATT and influence function and estimates the residual
-#' variance and conditional imbalance using cross-fitted DML. The source fit is
+#' variance and conditional imbalance using cross-fitted DML (default) or
+#' full-sample logistic/OLS fitting. The source fit is
 #' replayed to check its consistency with the supplied, ordered estimation data.
 #'
 #' @param fit A DRDID panel DR result estimated with `inffunc = TRUE`.
@@ -22,6 +23,10 @@
 #'   `cf.reps`, `cf.seed` and `ps.trim`. Repetitions default to 1. The estimand
 #'   and clean tuning are fixed. Every repetition must pass the overlap checks;
 #'   active probability clipping is not supported.
+#'   Must be empty for `method = "parametric"`.
+#' @param method `"crossfit"` (default) or `"parametric"`. The parametric method
+#'   currently requires the traditional estimator (`estMethod = "trad"`) and
+#'   uses its full-sample logistic-MLE/OLS nuisance fits without cross-fitting.
 #' @return A `dml_drdid` object inheriting from `dml`, with the external fit,
 #'   ordered panel data, source diagnostics and joint estimator covariance.
 #' @details Supports panel `imp` and `trad`, equal weights, successful source
@@ -41,19 +46,37 @@
 #'   rejects the fit. `adapter_info$fold_id` is a vector for one repetition or a
 #'   unit-by-repetition matrix otherwise; `rep_seeds` records the DML seeds and
 #'   `dml.att` contains the auxiliary ATT for every repetition.
+#'
+#'   The parametric method preserves the external ATT and IF and computes new
+#'   sensitivity moments with full-sample nuisance estimation effects in the
+#'   joint IF. It requires regular fixed-dimensional fits, overlap and finite
+#'   moments; the sensitivity interpretation additionally requires the relevant
+#'   nuisance functions to be correctly specified. A sandwich correction does
+#'   not correct model misspecification. These conditions also apply to reduced
+#'   benchmark models. Parametric fits store `info$cf.folds = 0L`, one result,
+#'   empty fold/seed metadata and `adapter_info$mode = "parametric"`. They contain
+#'   `parametric` fit diagnostics and result-level `nuisance.correction` vectors.
+#'   Benchmarks retain the method and reject learner overrides. See
+#'   `inst/notes/parametric-inference.md` in the source package for the derivation.
 #' @export
 dml_from_drdid <- function(fit, data = NULL, yname = NULL, tname = NULL,
                            idname = NULL, dname = NULL, xformla = NULL,
                            weightsname = NULL, y1 = NULL, y0 = NULL, D = NULL,
                            covariates = NULL, i.weights = NULL, unit_id = NULL,
-                           dml_args = list()) {
+                           dml_args = list(), method = c("crossfit", "parametric")) {
+  method <- match.arg(method)
+  if (method == "parametric") .panel_parametric_args(dml_args)
   version <- .drdid_require()
   spec <- .drdid_spec(fit)
+  if (method == "parametric" && spec$method != "trad")
+    .drdid_stop("method = 'parametric' currently requires estMethod = 'trad'.")
   sample <- .drdid_panel_data(fit, spec, data, yname, tname, idname, dname,
                               xformla, weightsname, y1, y0, D, covariates,
                               i.weights, unit_id)
   diagnostics <- .drdid_check_source(fit, sample, spec)
-  hybrid <- .panel_hybrid_aux(sample, fit$ATT, spec$phi, dml_args)
+  hybrid <- if (method == "parametric")
+    .panel_parametric_aux(sample, fit$ATT, spec$phi, spec, diagnostics) else
+    .panel_hybrid_aux(sample, fit$ATT, spec$phi, dml_args)
   aux <- hybrid$fit
   args <- hybrid$args
   fold <- hybrid$fold
@@ -65,11 +88,16 @@ dml_from_drdid <- function(fit, data = NULL, yname = NULL, tname = NULL,
                            unit_id = sample$unit_id, fold_id = fold,
                            rep_seeds = hybrid$rep_seeds,
                            diagnostics = diagnostics, original.se = fit$se,
-                           original.boot = fit$argu$boot,
-                           dml.att = vapply(aux$auxiliary_dml_results$main$treat,
-                                            function(r) r$estimates$theta.s, numeric(1)))
+                           original.boot = fit$argu$boot)
+  if (method == "parametric") {
+    aux$adapter_info$mode <- "parametric"
+    aux$adapter_info$inference <- aux$parametric$inference
+  } else {
+    aux$adapter_info$dml.att <- vapply(aux$auxiliary_dml_results$main$treat,
+                                      function(r) r$estimates$theta.s, numeric(1))
+  }
   aux$refit_spec <- list(source = list(method = spec$method, trim.level = spec$trim.level),
-                         dml_args = args)
+                         dml_args = args, method = method)
   aux$call <- match.call()
   aux$call.env <- NULL
   class(aux) <- c("dml_drdid", "dml")
@@ -152,6 +180,10 @@ dml_from_drdid <- function(fit, data = NULL, yname = NULL, tname = NULL,
 }
 
 .drdid_benchmark_refit <- function(model, x, dreg = NULL, yreg = NULL) {
+  method <- model$refit_spec$method
+  if (is.null(method)) method <- "crossfit"
+  if (method == "parametric" && (!is.null(dreg) || !is.null(yreg)))
+    .drdid_stop("Parametric benchmarks use the source logistic/OLS models; dreg/yreg overrides are not supported.")
   sample <- model$adapter_data
   if (!ncol(x)) .drdid_stop("A benchmark must retain at least one design column; retain the source intercept for an unconditional refit.")
   sample$X <- x
@@ -162,7 +194,7 @@ dml_from_drdid <- function(fit, data = NULL, yname = NULL, tname = NULL,
   if (!is.null(yreg)) args$yreg <- yreg
   out <- dml_from_drdid(fit, y1 = sample$y1, y0 = sample$y0, D = sample$D,
                  covariates = sample$X, i.weights = sample$i.weights,
-                 unit_id = sample$unit_id, dml_args = args)
+                 unit_id = sample$unit_id, dml_args = args, method = method)
   .panel_check_benchmark_alignment(model, out)
   out
 }
@@ -185,8 +217,14 @@ summary.dml_drdid <- function(object, combine.method = "median", ...) {
 
 #' @export
 print.summary_dml_drdid <- function(x, ...) {
-  cat("Hybrid panel DiD sensitivity fit\n")
-  cat("ATT: DRDID (", x$adapter_info$estMethod, "); sensitivity moments: cross-fitted DML\n", sep = "")
+  if (identical(x$adapter_info$mode, "parametric")) {
+    cat("Parametric panel DiD sensitivity fit\n")
+    cat("ATT: DRDID (trad); sensitivity moments: full-sample logistic/OLS\n")
+    cat("No cross-fitting; nuisance estimation effects included\n")
+  } else {
+    cat("Hybrid panel DiD sensitivity fit\n")
+    cat("ATT: DRDID (", x$adapter_info$estMethod, "); sensitivity moments: cross-fitted DML\n", sep = "")
+  }
   cat("Inference: analytic joint influence functions\n\n")
   print(x$main)
   invisible(x)
