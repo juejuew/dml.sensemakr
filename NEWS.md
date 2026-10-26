@@ -1,3 +1,13 @@
+# dml.sensemakr 0.2.2.9007
+
+* Add `pretrend_bounds()` for bias-magnitude and scale-adjusted pre-trend
+  benchmarking with ID-aligned joint influence functions and benchmark uncertainty.
+* Add `did_pretrend_bounds()` to construct an explicit forward placebo contrast
+  on a saved post-treatment cell's units and treatment groups, retaining its
+  parametric or repeated cross-fitting method and original post ATT/IF.
+* Keep the nonzero-population-placebo condition explicit. Exactly zero estimated
+  placebos return point bounds but no delta-method inference at positive k.
+
 # dml.sensemakr 0.2.2.9006
 
 * Add `method = "parametric"` to did single-cell/batch and traditional DRDID
