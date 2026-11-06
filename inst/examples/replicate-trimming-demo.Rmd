@@ -1,0 +1,48 @@
+---
+title: "Replicate with control trimming"
+output: html_document
+---
+
+Use `dml.sensemakr` 0.2.2.9009 or later.
+
+```{r setup, message=FALSE, warning=FALSE}
+library(did)
+library(dml.sensemakr)
+```
+
+1. Create a panel with some controls above the propensity cutoff.
+
+```{r}
+set.seed(31034)
+n <- 10000
+units <- data.frame(id = 1:n, x = rbinom(n, 1, 0.4), u = rnorm(n))
+units$D <- rbinom(n, 1, plogis(-0.4 + 6.3 * units$x))
+dat <- do.call(rbind, lapply(0:3, function(tt) {
+  transform(units, time = tt, group = 3 * D,
+            y = u + tt * (0.4 * x + 0.2 * D) +
+                0.8 * D * (tt >= 3) + rnorm(n))
+}))
+```
+
+2. Fit DiD and use replicate. No extra trimming option is needed.
+
+```{r}
+fit <- att_gt(data = dat, yname = "y", tname = "time", idname = "id",
+              gname = "group", xformla = ~ x,
+              bstrap = FALSE, cband = FALSE, compute_inffunc = TRUE)
+m <- dml_from_did(fit, group = 3, time = 3, method = "replicate")
+m
+```
+
+3. Run sensitivity analysis or pre-trend benchmarking as usual.
+
+```{r}
+confidence_bounds(m, cf.y = 0.05, cf.d = 0.05)
+did_pretrend_bounds(m, pre_period = c(0, 1), k = c(0, 0.5, 1), level = 0.975)
+```
+
+The original ATT/IF retain the source's control residual trimming. Sensitivity
+moments use all units and untrimmed propensities. Valid inference requires
+correct nuisance models and a regular trimming boundary, in addition to the
+usual overlap, moment and DiD sensitivity assumptions. The printed trimming
+count is a diagnostic, not verification of these assumptions.

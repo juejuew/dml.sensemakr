@@ -223,7 +223,7 @@ and inference conventions, and the
 ## did group-time ATT adapter
 
 `dml_from_did()` adapts one post-treatment `ATT(g,t)` from `did::att_gt()`.
-The following describes the default `method = "crossfit"` path.
+The following describes the default `method = "dml"` path.
 It reads the saved estimation data. With equal weights, it preserves the source
 ATT and correctly rescaled IF and estimates sensitivity moments with DML.
 With unequal positive weights, it warns and refits the whole cell with equal
@@ -257,29 +257,102 @@ IF; mean/median aggregation does not divide its variance by the number of splits
 See `vignette("did-adapter")` and the runnable
 [example](inst/examples/did-adapter.R) for installation and batch usage.
 
-### Full-sample parametric mode
+### Replicate method (full-sample parametric fitting)
 
 For equal-weight traditional panel estimates, use the source logistic-MLE/OLS
 models for sensitivity moments without cross-fitting:
 
 ```r
 parametric <- dml_from_did(source_fit, group = 5, time = 9,
-                           method = "parametric")
+                           method = "replicate")
 confidence_bounds(parametric, cf.y = 0.05, cf.d = 0.05)
 dml_benchmark(parametric, "z")
-batch <- dml_from_did_cells(source_fit, method = "parametric")
+batch <- dml_from_did_cells(source_fit, method = "replicate")
 ```
 
 This retains the original ATT and unit IF and includes full-sample nuisance
 estimation effects in the new moment IFs and joint covariance. It does not
 reproduce a source bootstrap SE. Leave `dml_args` empty: there are no folds,
 seeds or learner choices. Benchmark refits retain the same parametric method.
-Unequal weights, active trimming/clipping and the improved DRDID estimator
+Unequal weights, source probability clipping and the improved DRDID estimator
 are unsupported on this path. The traditional `dml_from_drdid()` interface
-also accepts `method = "parametric"`.
+also accepts `method = "replicate"`.
+
+Source **control residual trimming** is supported by replicate from 0.2.2.9009.
+It preserves the original ATT/IF and uses all units and untrimmed propensities
+for the sensitivity moments. Valid inference requires a correct control mean
+and a regular trimming boundary, as well as the existing sensitivity conditions;
+it is not generally robust to misspecified outcome models. Diagnostics are in
+`m$adapter_info$diagnostics$source.trimming`. See the
+[trimming derivation](inst/notes/replicate-trimming.md) and
+[short trimming demo](inst/examples/replicate-trimming-demo.Rmd).
 
 The sensitivity interpretation requires suitable model correctness, overlap,
 moment and regularity conditions, including for reduced benchmark models.
 Reproducing the source numerically does not establish those conditions.
 See the [derivation and assumptions](inst/notes/parametric-inference.md) and
 the [runnable example](inst/examples/did-parametric.R).
+
+
+## Panel DiD adapter methods
+
+Use `method = "dml"` for cross-fitted DML sensitivity moments, or
+`method = "replicate"` to reproduce the supported source estimator's full-sample
+logistic/OLS nuisance fits. On the source-preserving path both retain the
+original ATT and influence function. `"crossfit"` and `"parametric"` remain
+compatibility aliases. For DML, `dml_args = list(dirty.tuning = TRUE)` enables
+full-sample hyperparameter tuning followed by fold-specific fitting; the
+adapter default is `FALSE`. See `inst/notes/adapter-methods.md` for details.
+
+## Reestimate the entire did cell with DML
+
+Since 0.2.2.9011, use `method = "dml_refit"` to estimate ATT, `sigma2.s`,
+`nu2.s` and their joint influence functions with the same cross-fitted DML fit:
+
+```r
+m <- dml_from_did(fit, group = 2007, time = 2007, method = "dml_refit",
+  dml_args = list(yreg = "lm", dreg = "glm", d.class = TRUE, cf.seed = 1))
+confidence_bounds(m, cf.y = 0.05, cf.d = 0.05)
+did_pretrend_bounds(m, pre_period = c(2005, 2006), k = c(0, 1, 2))
+```
+
+| Method (equal weights) | ATT and its IF | Sensitivity moments |
+|---|---|---|
+| `"dml"` (default) | Preserved from did | Cross-fitted DML |
+| `"replicate"` | Preserved from did | Full-sample logistic/OLS, corrected IFs |
+| `"dml_refit"` | Reestimated by DML | Same cross-fitted DML fit |
+
+The new mode uses the saved balanced panel, cell selection and baseline design;
+source ATT/IF values and source control trimming are unused. Source `dr`, `reg`
+and `ipw` fits are supported, including `compute_inffunc = FALSE`. Sampling
+weights must be equal; higher-level clustering, custom estimators and repeated
+cross-sections remain unsupported. Active DML propensity clipping stops the fit.
+Covariate benchmarks and pre-trend benchmarks also use DML with matched folds.
+See `inst/examples/dml-refit-demo.Rmd` for a short runnable example. Inference
+still needs identification, overlap, moment and nuisance-rate conditions;
+optional dirty tuning requires suitable selection conditions.
+
+## ATU for the selected DiD controls
+
+Since 0.2.2.9012, `dml_refit` also supports ATU:
+
+```r
+m_atu <- dml_from_did(fit, group = 2007, time = 2007,
+  method = "dml_refit", target = "atu",
+  dml_args = list(yreg = "lm", dreg = "glm", d.class = TRUE, cf.seed = 1))
+summary(m_atu)
+dml_bounds(m_atu, cf.y = 0.05, cf.d = 0.05)
+```
+
+The target is the effect on the **selected controls** if they adopted in
+`group`, evaluated at `time`. It requires conditional mean comparability of
+potential changes under that adoption path; ordinary untreated parallel trends
+alone does not identify ATU. Sensitivity analysis can impose this condition
+given observed and omitted covariates, with explicit confounding-strength bounds.
+These are identifying assumptions, not properties verified by fitting DML.
+
+ATU uses treated-arm outcome fitting and inverse odds. All three estimates,
+IFs and sensitivity moments come from DML. Bounds, robustness values,
+covariate benchmarks and batch conversion support ATU. `replicate`, hybrid
+`dml`, and pre-trend benchmarking reject ATU. The existing ATT behavior remains
+the default. See `inst/notes/did-atu.md` and `inst/examples/atu-demo.Rmd`.

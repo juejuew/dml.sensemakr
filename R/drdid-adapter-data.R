@@ -170,11 +170,13 @@
   out
 }
 
-.drdid_check_source <- function(fit, sample, spec) {
-  .panel_check_source(fit$ATT, sample, spec, fit$ps.flag)
+.drdid_check_source <- function(fit, sample, spec, allow.trimming = FALSE) {
+  .panel_check_source(fit$ATT, sample, spec, fit$ps.flag,
+                      allow.trimming = allow.trimming)
 }
 
-.panel_check_source <- function(theta, sample, spec, ps.flag = NULL) {
+.panel_check_source <- function(theta, sample, spec, ps.flag = NULL,
+                                allow.trimming = FALSE) {
   replay <- .drdid_refit_source(sample, spec)
   close <- function(x, y) isTRUE(all.equal(as.numeric(x), as.numeric(y),
                                           tolerance = 1e-7, check.attributes = FALSE))
@@ -198,9 +200,43 @@
   if (!is.numeric(pscore) || length(pscore) != length(sample$D) || any(!is.finite(pscore)))
     .drdid_stop("DRDID propensity reconstruction must return one finite probability per unit.")
   pscore <- as.numeric(pscore)
-  if (any(!is.finite(pscore)) || any(pscore <= 0 | pscore >= 1 - 1e-6) ||
-      any(pscore[sample$D == 0] >= spec$trim.level))
-    .drdid_stop("Source propensity trimming/clipping is active. This adapter currently supports the untrimmed panel estimand only.")
-  list(reproduced = TRUE, propensity = pscore, trim.active = FALSE,
-       analytic.se = replay$se)
+  trimming <- .panel_source_trimming(pscore, sample, spec, allow.trimming)
+  list(reproduced = TRUE, propensity = pscore, trim.active = trimming$active,
+       source.trimming = trimming, analytic.se = replay$se)
+}
+
+# DRDID's trad rule removes only control residual weights, not observations
+# from the nuisance fits. Clipping is a different operation and stays rejected.
+.panel_source_trimming <- function(e, sample, spec, allow.trimming = FALSE) {
+  if (any(!is.finite(e)) || any(e <= 0 | e >= 1 - 1e-6))
+    .drdid_stop("Source propensity clipping is active or probabilities are outside (0, 1); this is not supported by the panel adapter.")
+  control <- sample$D == 0
+  trimmed <- which(control & e >= spec$trim.level)
+  active <- length(trimmed) > 0L
+  if (active && (!isTRUE(allow.trimming) || !identical(spec$method, "trad")))
+    .drdid_stop("Source propensity trimming is active. Only method = 'replicate' with the traditional estimator supports control trimming; see its model and boundary conditions.")
+  keep <- control & e < spec$trim.level
+  mass <- mean(as.numeric(keep) * e / (1 - e))
+  if (!is.finite(mass) || mass <= 0)
+    .drdid_stop("Source trimming leaves no positive control residual weight.")
+  list(active = active, threshold = spec$trim.level,
+       n.trimmed.controls = length(trimmed), n.retained.controls = sum(keep),
+       trimmed.control.indices = trimmed,
+       trimmed.control.ids = sample$unit_id[trimmed],
+       control.weight.mean = mass,
+       min.control.distance = min(abs(e[control] - spec$trim.level)),
+       sensitivity.sample = "all source units",
+       sensitivity.propensity = "unclipped and untrimmed",
+       boundary.conditions.verified = FALSE)
+}
+
+.panel_print_source_trimming <- function(info) {
+  trimming <- info$diagnostics$source.trimming
+  if (isTRUE(trimming$active)) {
+    cat("Source control trimming:", trimming$n.trimmed.controls,
+        "at propensity >=", trimming$threshold, "\n")
+    cat("Sensitivity moments use all source units and untrimmed propensities.\n")
+    cat("Inference requires correct outcome regression and a regular trimming boundary.\n")
+  }
+  invisible(NULL)
 }

@@ -29,7 +29,10 @@ install.packages(c("did", "DRDID"))
 
 Supported: balanced panel estimation with `est_method = "dr"` and positive
 finite weights. The hybrid path requires `compute_inffunc = TRUE`, constant
-weights and inactive trimming. The unequal-weight path estimates all quantities
+weights and inactive trimming for the DML method. Replicate supports source
+control residual trimming under correct-mean and regular-boundary conditions
+(see `inst/notes/replicate-trimming.md`), with all units retained for sensitivity
+moments. The unequal-weight path estimates all quantities
 with DML and does not require the source IF.
 Both control groups, both computation modes, anticipation and both base-period
 settings are supported. A balanced panel retained after did's cleaning is valid.
@@ -39,7 +42,7 @@ the saved `DIDparams$panel` does.
 Not supported: actual unbalanced or repeated-cross-section estimation,
 `fix_weights = "varying"` (which invokes an RC estimator), other/custom
 estimators, pre-treatment/reference cells, clustering above individuals,
-`aggte()` objects, or active trimming on the hybrid path. The source bootstrap may be enabled,
+`aggte()` objects, or active source trimming with the DML method. The source bootstrap may be enabled,
 but sensitivity inference uses analytic joint IFs, not its bootstrap SEs or
 simultaneous critical values.
 

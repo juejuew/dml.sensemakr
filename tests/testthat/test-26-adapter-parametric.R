@@ -15,6 +15,33 @@ parametric_fixture <- function(n = 160L) {
                         c(list(fit = source, method = "parametric"), input)))
 }
 
+# Keep all numerical solver outputs intact and alter only its OLS status.
+# This exercises a backend failure that finite-coefficient checks cannot detect.
+with_ols_status <- function(status, code) {
+  lookup <- dml.sensemakr:::.drdid_function
+  testthat::local_mocked_bindings(.drdid_function = function(name, required) {
+    solver <- lookup(name, required)
+    if (name != "fastglm_fit") return(solver)
+    function(x, y, family, weights = NULL, method = 0L) {
+      out <- solver(x = x, y = y, family = family, weights = weights, method = method)
+      if (identical(family$family, "gaussian")) out$converged <- status
+      out
+    }
+  }, .package = "dml.sensemakr")
+  force(code)
+}
+
+test_that("replicate requires explicit OLS convergence even with valid numerical outputs", {
+  f <- parametric_fixture()
+  run <- function() do.call(dml_from_drdid,
+    c(list(fit = f$source, method = "replicate"), f$input))
+  for (status in list(FALSE, NA, NULL))
+    expect_error(with_ols_status(status, run()), "control OLS did not report successful convergence")
+  expect_equal(with_ols_status(TRUE, run())$results, f$model$results)
+})
+
+
+
 test_that("parametric mode preserves the source and reconstructs full-sample nuisances", {
   f <- parametric_fixture()
   m <- f$model; r <- m$results$main$treat[[1]]
@@ -171,7 +198,7 @@ test_that("did single-cell and batch paths preserve the parametric method", {
       as.numeric(source$inffunc[cell$if_rows, cell$column]) * cell$if_scale,
       tolerance = 1e-12)
     expect_equal(unname(se(m)), source$se[cell$column], tolerance = 1e-10)
-    expect_output(print(m), "Parametric did ATT")
+    expect_output(print(m), "Replicate did ATT")
     batch <- dml_from_did_cells(source,
       cells = data.frame(group = c(3, 3, 3), time = c(3, 2, 4)),
       method = "parametric")
@@ -201,7 +228,7 @@ test_that("parametric mode rejects unsupported settings instead of changing meth
   expect_error(run(imp), "estMethod = 'trad'")
   trimmed <- do.call(DRDID::drdid_panel,
                       c(f$input, list(inffunc = TRUE, trim.level = 0.5)))
-  expect_error(run(trimmed), "trimming")
+  expect_true(run(trimmed)$adapter_info$diagnostics$trim.active)
   dat <- parametric_did_data(); dat$w <- 1 + dat$id / max(dat$id)
   source <- did::att_gt(yname = "y", tname = "time", idname = "id", gname = "g",
     xformla = ~ x + z, data = dat, bstrap = FALSE, cband = FALSE, weightsname = "w")
@@ -211,4 +238,22 @@ test_that("parametric mode rejects unsupported settings instead of changing meth
   expect_true(all(grepl("equal sampling weights", batch$status$message)))
   expect_error(dml_from_did(source, 3, 4, method = "parametric",
     dml_args = list(cf.seed = 1)), "empty dml_args")
+})
+
+test_that("OLS failure propagates to did cells and refits and is recorded by batches", {
+  dat <- parametric_did_data()
+  source <- did::att_gt(yname = "y", tname = "time", idname = "id", gname = "g",
+    xformla = ~ x + z, data = dat, bstrap = FALSE, cband = FALSE)
+  m <- dml_from_did(source, 3, 4, method = "replicate")
+  msg <- "control OLS did not report successful convergence"
+  expect_error(with_ols_status(FALSE, dml_from_did(source, 3, 4, method = "replicate")), msg)
+  batch <- with_ols_status(FALSE, dml_from_did_cells(source, method = "replicate"))
+  expect_true(all(batch$status$status == "error"))
+  expect_true(all(grepl(msg, batch$status$message)))
+  expect_true(all(vapply(batch$models, is.null, logical(1))))
+  expect_error(with_ols_status(FALSE,
+    dml_from_did_cells(source, method = "replicate", on_error = "stop")), msg)
+  expect_error(with_ols_status(FALSE, dml.sensemakr:::.did_benchmark_refit(m,
+    m$data$x[, c("(Intercept)", "x"), drop = FALSE])), msg)
+  expect_error(with_ols_status(FALSE, did_pretrend_bounds(m, c(1, 2))), msg)
 })

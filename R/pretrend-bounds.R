@@ -4,10 +4,10 @@
 #' Compare a post-treatment panel ATT with a pre-treatment placebo ATT on the
 #' same units. Propagate the joint estimation uncertainty of both comparisons.
 #' @param model A post-treatment, equal-weight panel adapter object returned by
-#'   [dml_from_did()] or [dml_from_drdid()].
+#'   [dml_from_did()] or [dml_from_drdid()], with target `"att"`.
 #' @param pre_model A panel adapter object for a genuinely untreated comparison.
 #'   It must use the same unit IDs, treatment-group indicator, estimation method,
-#'   and (for cross-fitting) partitions and repetitions as `model`. Both objects
+#'   and (for DML) partitions and repetitions as `model`. Both objects
 #'   must have explicitly supplied IDs; row numbers generated for wide input are
 #'   not sufficient. Pre-period outcomes and covariates may differ.
 #' @param k A nonempty vector of finite, nonnegative extrapolation multipliers.
@@ -41,6 +41,9 @@
 #' This low-level function cannot verify dates in arbitrary wide-panel objects.
 #' The caller is responsible for selecting genuinely pre-treatment outcomes.
 #' Use [did_pretrend_bounds()] to construct and check the comparison from a did fit.
+#' ATU objects are rejected. Untreated pre-period contrasts do not by themselves
+#' calibrate bias in treated potential changes; no ATU transport restriction is
+#' implemented. Use fixed-strength or covariate-based ATU sensitivity analysis.
 #' @return A `dml_pretrend_bounds` object with `bounds` (one row per `k`),
 #'   `results` (per-repetition bounds and unit-level IFs), `joint.covariance`
 #'   (per-repetition covariance of the six pre/post estimates), aligned `unit_id`,
@@ -111,6 +114,7 @@ pretrend_bounds <- function(model, pre_model, k = 1,
 
 .pretrend_pair <- function(model, pre_model) {
   fits <- list(model, pre_model)
+  for (m in fits) .pretrend_check_target(m)
   for (m in fits) {
     if (!(inherits(m, "dml_did") || inherits(m, "dml_drdid")) ||
         !identical(m$info$target, "att") || !isTRUE(m$info$conditional) ||
@@ -131,16 +135,16 @@ pretrend_bounds <- function(model, pre_model, k = 1,
   if (!identical(as.numeric(model$adapter_data$D),
                  as.numeric(pre_model$adapter_data$D[ix])))
     .drdid_stop("Treatment-group membership differs between the pre/post fits.")
-  method <- function(m) if (is.null(m$refit_spec$method)) "crossfit" else m$refit_spec$method
+  method <- function(m) .panel_adapter_method(m$refit_spec$method)
   modes <- vapply(fits, method, character(1))
-  if (!all(modes %in% c("crossfit", "parametric")) || modes[1L] != modes[2L])
-    .drdid_stop("Pre/post fits must use the same method (crossfit or parametric).")
+  if (!all(modes %in% c("dml", "replicate", "dml_refit")) || modes[1L] != modes[2L])
+    .drdid_stop("Pre/post fits must use the same method (dml, replicate or dml_refit).")
   post <- model$results$main$treat
   pre <- pre_model$results$main$treat
   R <- length(post)
-  if (!R || length(pre) != R || (modes[1L] == "parametric" && R != 1L))
+  if (!R || length(pre) != R || (modes[1L] == "replicate" && R != 1L))
     .drdid_stop("Pre/post fits must contain the same number of estimation repetitions.")
-  if (modes[1L] == "crossfit") {
+  if (modes[1L] != "replicate") {
     folds <- function(m) {
       f <- m$adapter_info$fold_id
       if (is.null(dim(f))) f <- matrix(f, ncol = 1L)
@@ -173,6 +177,14 @@ pretrend_bounds <- function(model, pre_model, k = 1,
     colnames(joint[[r]]) <- labels
   }
   list(ids = ids, method = modes[1L], estimates = estimates, joint = joint)
+}
+
+# Pre-period untreated contrasts do not automatically benchmark selection in
+# treatment effects. An ATU transport restriction needs a separate derivation.
+.pretrend_check_target <- function(model) {
+  if (is.list(model) && identical(model$info$target, "atu"))
+    .drdid_stop("Pre-trend benchmarking is not implemented for ATU: untreated pre-trends do not by themselves bound bias in treated potential changes. Use dml_bounds() or covariate benchmarking with an explicit ATU sensitivity specification.")
+  invisible(NULL)
 }
 
 # Algebraic kernel; the IFs supplied here already include nuisance estimation.
@@ -228,12 +240,19 @@ pretrend_bounds <- function(model, pre_model, k = 1,
 #' different control group. With a universal baseline it can be normalized to
 #' zero or have the opposite time orientation. No such stored cell is substituted
 #' for the explicit forward comparison requested here.
+#' With `method = "dml_refit"`, the supplied post-treatment DML fit is retained
+#' and the placebo ATT, sensitivity moments and IFs are all estimated by DML.
+#' Source ATT/IF replay and DRDID placebo fitting are skipped in that mode.
 #'
 #' The method and DML settings are inherited from `model`; repeated cross-fitting
 #' uses matching partitions. Period lengths are not automatically rescaled: `k`
 #' concerns the changes over the selected intervals. This function handles one
 #' pre-period contrast at a time, not maxima over several pre-trends or event-study
 #' aggregation. It can be used as `FUN` in [did_cell_apply()].
+#' With replicate source trimming, pre and post fits retain all common units and
+#' each computes its own control mask; unit-level IF covariance uses all units.
+#' Both fits need the correct-mean and regular-boundary conditions in
+#' [dml_from_drdid()]. Trimming masks need not coincide across periods.
 #' @return A `dml_pretrend_bounds` object, additionally recording `pre_period`,
 #'   `post_cell` and `sample_policy = "post_cell"`. Its `pre_model` can be reused
 #'   in [pretrend_bounds()] to change the type or multipliers without refitting.
@@ -243,7 +262,7 @@ pretrend_bounds <- function(model, pre_model, k = 1,
 #' Appendix C.2.
 #' @examples
 #' \dontrun{
-#' m <- dml_from_did(fit, group = 2007, time = 2007, method = "parametric")
+#' m <- dml_from_did(fit, group = 2007, time = 2007, method = "replicate")
 #' b <- did_pretrend_bounds(m, pre_period = c(2005, 2006), k = c(0, 1, 2))
 #' b$bounds
 #' pretrend_bounds(m, b$pre_model, k = c(0, 1, 2), type = "scaled")
@@ -256,12 +275,14 @@ did_pretrend_bounds <- function(model, pre_period, k = 1,
   type <- match.arg(type)
   combine.method <- match.arg(combine.method)
   .pretrend_options(k, level)
+  .pretrend_check_target(model)
   if (!inherits(model, "dml_did") || !inherits(model$external_fit, "MP"))
     .drdid_stop("model must be a did cell retaining its original MP object; use pretrend_bounds() for an explicit pair of panel fits.")
   if (!is.numeric(pre_period) || length(pre_period) != 2L ||
       any(!is.finite(pre_period)) || pre_period[1L] >= pre_period[2L])
     .drdid_stop("pre_period must be c(base, end) with two finite, strictly increasing periods.")
-  ctx <- .did_adapter_context(model$external_fit)
+  method <- .panel_adapter_method(model$refit_spec$method)
+  ctx <- .did_adapter_context(model$external_fit, method)
   if (ctx$unweighted.refit)
     .drdid_stop("Pre-trend benchmarking currently requires equal sampling weights.")
   cell <- model$adapter_info$cell
@@ -270,13 +291,15 @@ did_pretrend_bounds <- function(model, pre_period, k = 1,
     .drdid_stop("Both pre_period dates must precede treatment minus anticipation, and end no later than the post baseline.")
   periods <- match(pre_period, ctx$times)
   if (anyNA(periods)) .drdid_stop("A requested pre_period is absent from the saved panel.")
-  # Replay the original post cell, but never refit its DML auxiliary estimator.
-  src <- .did_cell_sample(ctx, cell$group, cell$time)
+  # Verify saved post data. Source ATT/IF replay applies only to preserving modes.
+  src <- .did_cell_sample(ctx, cell$group, cell$time,
+                          allow.trimming = method == "replicate")
   close <- function(a, b) isTRUE(all.equal(a, b, tolerance = 1e-10, check.attributes = FALSE))
   fields <- c("y1", "y0", "D", "X", "i.weights", "unit_id")
   if (!all(vapply(fields, function(key) close(src$sample[[key]], model$adapter_data[[key]]), logical(1))) ||
-      !close(as.numeric(src$theta), model$results$main$treat[[1L]]$estimates$theta.s) ||
-      !close(src$phi, model$results$main$treat[[1L]]$psis$psi.theta.s))
+      (method != "dml_refit" &&
+       (!close(as.numeric(src$theta), model$results$main$treat[[1L]]$estimates$theta.s) ||
+        !close(src$phi, model$results$main$treat[[1L]]$psis$psi.theta.s))))
     .drdid_stop("The saved post cell no longer matches its source data or ATT/IF.")
   sample <- src$sample
   take <- match(sample$unit_id, ctx$ids)
@@ -284,12 +307,21 @@ did_pretrend_bounds <- function(model, pre_period, k = 1,
   sample$y0 <- y[ctx$rows[[periods[1L]]][take]]
   sample$y1 <- y[ctx$rows[[periods[2L]]][take]]
   sample$X <- ctx$X[[periods[1L]]][take, , drop = FALSE]
-  source <- .drdid_refit_source(sample, model$refit_spec$source)
-  method <- model$refit_spec$method
-  if (is.null(method)) method <- "crossfit"
-  pre_model <- dml_from_drdid(source, y1 = sample$y1, y0 = sample$y0,
-    D = sample$D, covariates = sample$X, i.weights = sample$i.weights,
-    unit_id = sample$unit_id, dml_args = model$refit_spec$dml_args, method = method)
+  sample$input.info$times <- pre_period
+  sample$input.info$source_rows <- list(pre = ctx$rows[[periods[1L]]][take],
+                                      post = ctx$rows[[periods[2L]]][take])
+  if (method == "dml_refit") {
+    info <- model$adapter_info
+    info$cell <- list(group = cell$group, time = pre_period[2L],
+      base_period = pre_period[1L], n_cell = length(take), n_global = ctx$N)
+    info[c("original.se", "original.boot", "original.cband")] <- NULL
+    pre_model <- .did_dml_assemble(sample, info, NULL, model$refit_spec$dml_args)
+  } else {
+    source <- .drdid_refit_source(sample, model$refit_spec$source)
+    pre_model <- dml_from_drdid(source, y1 = sample$y1, y0 = sample$y0,
+      D = sample$D, covariates = sample$X, i.weights = sample$i.weights,
+      unit_id = sample$unit_id, dml_args = model$refit_spec$dml_args, method = method)
+  }
   pre_model$adapter_info$pre_period <- pre_period
   pre_model$adapter_info$sample_policy <- "post_cell"
   out <- pretrend_bounds(model, pre_model, k = k, type = type, level = level,
@@ -307,7 +339,7 @@ did_pretrend_bounds <- function(model, pre_period, k = 1,
 #' @rdname pretrend_bounds
 #' @export
 print.dml_pretrend_bounds <- function(x, digits = 4, ...) {
-  cat("Pre-trend benchmark:", x$type, "extrapolation;", x$method, "fits\n")
+  cat("Pre-trend benchmark:", x$type, "extrapolation;", .panel_adapter_method(x$method), "fits\n")
   if (!is.null(x$pre_period))
     cat("Pre-period comparison:", x$pre_period[1L], "to", x$pre_period[2L],
         "(post-cell units and groups)\n")

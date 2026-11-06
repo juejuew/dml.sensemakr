@@ -62,26 +62,20 @@ export(se)
 export(sensemakr)
 import(caret)
 import(ggplot2)
-importFrom(caret,
-  train,
-  trainControl
-)
-importFrom(graphics,
-  contour,
-  par,
-  points,
-  text
-)
-importFrom(stats,
-  coef,
-  confint,
-  median,
-  optim,
-  pnorm,
-  predict,
-  printCoefmat,
-  qnorm,
-  setNames,
-  var
-)
+importFrom(caret,train)
+importFrom(caret,trainControl)
+importFrom(graphics,contour)
+importFrom(graphics,par)
+importFrom(graphics,points)
+importFrom(graphics,text)
+importFrom(stats,coef)
+importFrom(stats,confint)
+importFrom(stats,median)
+importFrom(stats,optim)
+importFrom(stats,pnorm)
+importFrom(stats,predict)
+importFrom(stats,printCoefmat)
+importFrom(stats,qnorm)
+importFrom(stats,setNames)
+importFrom(stats,var)
 importFrom(utils,capture.output)

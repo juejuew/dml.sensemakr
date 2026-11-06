@@ -2,43 +2,65 @@
 % Please edit documentation in R/did-adapter.R
 \name{dml_from_did_cells}
 \alias{dml_from_did_cells}
-\title{Convert several did ATT cells without dropping failures}
+\title{Convert several did cells for ATT or ATU without dropping failures}
 \usage{
 dml_from_did_cells(
   fit,
   cells = NULL,
   dml_args = list(),
   on_error = c("record", "stop"),
-  method = c("crossfit", "parametric")
+  method = c("dml", "replicate", "dml_refit"),
+  target = c("att", "atu")
 )
 }
 \arguments{
-\item{fit}{An \code{MP} object from \code{did::att_gt()}, estimated with \code{est_method = "dr"}.
+\item{fit}{An \code{MP} object from \code{did::att_gt()}. The \code{"dml"} and \code{"replicate"}
+methods require \code{est_method = "dr"}.
 The equal-weight hybrid path requires saved influence functions
-(\code{compute_inffunc = TRUE}) and compatible DRDID panel interfaces.}
+(\code{compute_inffunc = TRUE}) and compatible DRDID panel interfaces.
+For \code{"dml_refit"}, built-in \code{"dr"}, \code{"reg"} and \code{"ipw"} source estimators
+are supported, and saved influence functions are unnecessary.}
 
 \item{cells}{A data.frame with numeric \code{group} and \code{time} columns and unique
 rows. NULL selects all post-treatment cells in source order, including cells
 whose estimation failed. Pre-treatment cells are listed in \code{excluded}.}
 
 \item{dml_args}{Named list of DML settings; see \code{\link[=dml_from_drdid]{dml_from_drdid()}}.
-Must be empty for \code{method = "parametric"}.}
+\code{dirty.tuning} defaults to \code{FALSE}; \code{TRUE} selects hyperparameters on the
+full cell sample before fitting each cross-fitting training fold.
+Must be empty for \code{method = "replicate"}.}
 
 \item{on_error}{\code{"record"} keeps an error message and a NULL entry for each
 failed cell; \code{"stop"} stops at the first failure. Invalid source objects or
 invalid selection syntax always stop before fitting.}
 
-\item{method}{\code{"crossfit"} (default) retains the existing cross-fitted method.
-\code{"parametric"} uses the source cell's full-sample logistic MLE and control-arm
+\item{method}{\code{"dml"} (default) retains the existing cross-fitted method.
+\code{"replicate"} uses the source cell's full-sample logistic MLE and control-arm
 linear regression, with no sample splitting. Requires equal weights and no
-active source trimming/clipping. It never switches to an unweighted refit.}
+source probability clipping. Source control trimming is supported under the
+model and boundary conditions below. It never switches to an unweighted refit.
+Legacy names \code{"crossfit"} and \code{"parametric"} are accepted as aliases.
+These two methods verify the source fit; \code{"replicate"} also follows its nuisance
+fitting procedure rather than using cross-fitted DML sensitivity moments.
+\code{"dml_refit"} uses only the saved data/design and cell selection: all three
+estimates (\code{theta.s}, \code{sigma2.s}, \code{nu2.s}) and their IFs come from \code{\link[=dml]{dml()}}.
+It requires equal weights and does not reproduce or preserve the source ATT.}
+
+\item{target}{\code{"att"} (default) targets the selected treated cohort.
+\code{"atu"} is available only with \code{method = "dml_refit"}: it targets the
+selected cell's control units under hypothetical adoption in \code{group},
+evaluated at \code{time}. The control population follows the saved
+\code{control_group} and anticipation rules and can change across cells.
+Select the target here; \code{dml_args$target}, if supplied, must agree.}
 }
 \value{
 A \code{dml_did_cells} object with \code{models} (one entry per selected cell),
 \code{status} (cell labels, success/error status, messages, warnings and sample
 sizes), and \code{excluded} (unselected source cells). Names remain in source or
-explicit selection order. No ATT aggregation is performed.
+explicit selection order. No effect aggregation is performed. For ATU,
+the same control units can appear in multiple cells; these are separate
+hypothetical-adoption estimands, not disjoint cohorts to average together.
 }
 \description{
-Convert several did ATT cells without dropping failures
+Convert several did cells for ATT or ATU without dropping failures
 }

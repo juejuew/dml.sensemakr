@@ -1,13 +1,15 @@
-# Full-sample parametric panel sensitivity mode
+# Replicate method: full-sample parametric panel sensitivity
 
 ## Scope and interface
 
-Use `dml_from_did(fit, group, time, method = "parametric")`,
-`dml_from_did_cells(fit, method = "parametric")`, or
-`dml_from_drdid(fit, ..., method = "parametric")` for a traditional panel fit.
-The default remains `method = "crossfit"`. The new method requires an empty
-`dml_args`, equal positive sampling weights, no active source trimming or
-clipping, and the existing adapter's balanced-panel/source-data/IF checks.
+Use `dml_from_did(fit, group, time, method = "replicate")`,
+`dml_from_did_cells(fit, method = "replicate")`, or
+`dml_from_drdid(fit, ..., method = "replicate")` for a traditional panel fit.
+The default is `method = "dml"`. The old method names `"crossfit"` and
+`"parametric"` remain aliases for `"dml"` and `"replicate"`, respectively. The new method requires an empty
+`dml_args`, equal positive sampling weights, no source probability clipping,
+and the existing adapter's balanced-panel/source-data/IF checks. Source control
+trimming is supported under the additional conditions in `replicate-trimming.md`.
 It supports the traditional logistic-MLE/OLS estimator only. It does not call
 `dml()` with one fold, select learners, or use random fold assignments.
 
@@ -19,6 +21,12 @@ are reconstructed using `DRDID`'s `fastglm_fit` solvers and the saved design,
 including intercepts and transformations. Replay checks use numerical tolerance
 1e-7. They do not certify model correctness or bitwise identity across solvers
 and package versions.
+
+Both the logistic and control OLS solver must explicitly report
+`converged = TRUE`. A false, missing or indeterminate flag stops the replicate
+fit. Finite coefficients, finite predictions and nonsingular information
+matrices remain separate requirements; convergence alone does not establish
+model correctness or the validity of sensitivity inference.
 
 The sensitivity moments below are new estimates, not values stored in the
 original did/DRDID result. `fits[[1]]$preds` stores their full-sample predictions;
@@ -63,7 +71,7 @@ finite fits, nonsingular matrices and positive sensitivity scale, but it cannot
 verify these population assumptions. No arbitrary dimension-to-sample cutoff
 is represented as a statistical guarantee.
 
-Under misspecification, regular sandwich IFs can describe the corresponding
+Without active source trimming, under misspecification, regular sandwich IFs can describe the corresponding
 pseudo-true parametric functionals. They do not turn those functionals into the
 nonparametric sensitivity targets. ATT double robustness alone does not suffice
 for sensitivity validity. A reduced benchmark model has its own conditions:
@@ -71,6 +79,13 @@ dropping a covariate can make even a previously correct logistic/linear model
 misspecified. Benchmark output is a model-refit comparison, with a causal
 calibration interpretation only when the relevant conditions also hold for
 the reduced fit.
+
+For active source trimming, the correct control conditional mean and regular
+trimming boundary are essential to the supported ATT inference. Its generic
+pseudo-true sandwich validity is not claimed: the source IF does not include
+a potentially nonzero boundary term under mean-model misspecification. The
+full-sample sensitivity moments above remain unchanged; see
+`replicate-trimming.md` for the target and IF argument.
 
 ## Nuisance and moment influence functions
 

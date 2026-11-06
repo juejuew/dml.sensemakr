@@ -1,0 +1,54 @@
+---
+title: "Pre-trend benchmarking demo"
+output: html_document
+---
+
+Load the updated package (0.2.2.9008 or later).
+
+```{r setup, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(error = FALSE)
+library(did)
+library(dml.sensemakr)
+```
+
+1. Fit the original DiD model.
+
+```{r}
+data("mpdta", package = "did")
+fit <- did::att_gt(
+  data = mpdta, yname = "lemp", tname = "year",
+  idname = "countyreal", gname = "first.treat", xformla = ~ lpop,
+  panel = TRUE, est_method = "dr", control_group = "nevertreated",
+  bstrap = FALSE, cband = FALSE, compute_inffunc = TRUE
+)
+```
+
+2. Use the source nuisance-fitting procedure (previously called Option 2).
+
+```{r}
+m <- dml_from_did(fit, group = 2007, time = 2007, method = "replicate")
+```
+
+3. Benchmark against the 2005-to-2006 pre-trend on the same units.
+
+```{r}
+b <- did_pretrend_bounds(
+  m, pre_period = c(2005, 2006), k = c(0, 0.5, 1, 2),
+  type = "bias", level = 0.975
+)
+b
+```
+
+`k = 1` allows post-treatment bias as large as the pre-period placebo ATT in
+absolute value. Change `type` to `"scaled"` to adjust for the sensitivity-scale
+ratio. `theta.minus` / `theta.plus` are point bounds; `lwr` / `upr` include
+sampling uncertainty. The selected level gives at least 95% asymptotic
+coverage of both population endpoints for each fixed `k` under the assumptions.
+
+To use DML instead, change step 2 to
+`dml_from_did(fit, 2007, 2007, method = "dml", dml_args = list(dirty.tuning = TRUE))`.
+Omit `dirty.tuning` or set it to `FALSE` for the adapter's default clean tuning.
+
+Interpretation requires no pre-period causal effect and the chosen pre/post
+bias restriction. For positive `k`, regular delta inference requires a nonzero
+population placebo ATT and can be unreliable near zero.

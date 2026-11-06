@@ -1,0 +1,56 @@
+---
+title: "DML refit demo"
+output: html_document
+---
+
+Use the updated local package (0.2.2.9011 or later).
+
+```{r setup, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(error = FALSE)
+library(did)
+library(dml.sensemakr)
+```
+
+1. Fit the original DiD model. If you already have `fit`, start at step 2.
+
+```{r}
+data("mpdta", package = "did")
+fit <- did::att_gt(
+  data = mpdta, yname = "lemp", tname = "year",
+  idname = "countyreal", gname = "first.treat", xformla = ~ lpop,
+  panel = TRUE, est_method = "dr", control_group = "nevertreated",
+  bstrap = FALSE, cband = FALSE, compute_inffunc = FALSE
+)
+```
+
+2. Reestimate ATT and both sensitivity moments by DML.
+
+```{r}
+m <- dml_from_did(
+  fit, group = 2007, time = 2007, method = "dml_refit",
+  dml_args = list(yreg = "lm", dreg = "glm", d.class = TRUE,
+                  cf.folds = 5, cf.seed = 1)
+)
+summary(m)
+unlist(m$results$main$treat[[1]]$estimates[c("theta.s", "sigma2.s", "nu2.s")])
+```
+
+`lm` and `glm` are simple example nuisance learners; the three parameters use
+cross-fitted DML scores. The ATT can differ from `fit$att`. Equal sampling weights
+are required. Active DML propensity clipping stops the fit.
+
+3. Run sensitivity analysis or pre-trend benchmarking.
+
+```{r}
+confidence_bounds(m, cf.y = 0.05, cf.d = 0.05)
+b <- did_pretrend_bounds(
+  m, pre_period = c(2005, 2006), k = c(0, 0.5, 1, 2),
+  type = "bias", level = 0.975
+)
+b
+```
+
+The placebo is also estimated by DML on the same units and folds. Pre-trend
+bounds require a zero pre-period causal effect and the chosen bias-transport
+restriction; delta inference at positive `k` requires a nonzero population
+placebo ATT. `cf.reps` and optional `dirty.tuning = TRUE` go in `dml_args`.

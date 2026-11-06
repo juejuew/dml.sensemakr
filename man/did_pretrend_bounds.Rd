@@ -52,16 +52,23 @@ not-yet-treated controls, a pre-treatment cell stored by \code{att_gt()} can hav
 different control group. With a universal baseline it can be normalized to
 zero or have the opposite time orientation. No such stored cell is substituted
 for the explicit forward comparison requested here.
+With \code{method = "dml_refit"}, the supplied post-treatment DML fit is retained
+and the placebo ATT, sensitivity moments and IFs are all estimated by DML.
+Source ATT/IF replay and DRDID placebo fitting are skipped in that mode.
 
 The method and DML settings are inherited from \code{model}; repeated cross-fitting
 uses matching partitions. Period lengths are not automatically rescaled: \code{k}
 concerns the changes over the selected intervals. This function handles one
 pre-period contrast at a time, not maxima over several pre-trends or event-study
 aggregation. It can be used as \code{FUN} in \code{\link[=did_cell_apply]{did_cell_apply()}}.
+With replicate source trimming, pre and post fits retain all common units and
+each computes its own control mask; unit-level IF covariance uses all units.
+Both fits need the correct-mean and regular-boundary conditions in
+\code{\link[=dml_from_drdid]{dml_from_drdid()}}. Trimming masks need not coincide across periods.
 }
 \examples{
 \dontrun{
-m <- dml_from_did(fit, group = 2007, time = 2007, method = "parametric")
+m <- dml_from_did(fit, group = 2007, time = 2007, method = "replicate")
 b <- did_pretrend_bounds(m, pre_period = c(2005, 2006), k = c(0, 1, 2))
 b$bounds
 pretrend_bounds(m, b$pre_model, k = c(0, 1, 2), type = "scaled")

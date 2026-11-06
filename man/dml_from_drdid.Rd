@@ -20,7 +20,7 @@ dml_from_drdid(
   i.weights = NULL,
   unit_id = NULL,
   dml_args = list(),
-  method = c("crossfit", "parametric")
+  method = c("dml", "replicate")
 )
 }
 \arguments{
@@ -49,17 +49,29 @@ supplied order and do not independently establish the original IF mapping.}
 
 \item{dml_args}{Named list of DML options, such as learners, `cf.folds`,
 `cf.reps`, `cf.seed` and `ps.trim`. Repetitions default to 1. The estimand
-and clean tuning are fixed. Every repetition must pass the overlap checks;
+is fixed. Every repetition must pass the overlap checks;
 active probability clipping is not supported.
-Must be empty for `method = "parametric"`.}
+Tuning defaults to `dirty.tuning = FALSE` (within training folds).
+Set `dirty.tuning = TRUE` to select hyperparameters using the full cell
+sample (the control arm for the outcome model), then refit on each training
+fold. Must be a single non-missing logical. Benchmark refits retain this
+choice and retune on their own data. Full-sample tuning introduces
+selection dependence; inference requires appropriate nuisance-rate and
+tuning-selection conditions. Must be empty for `method = "replicate"`.}
 
-\item{method}{`"crossfit"` (default) or `"parametric"`. The parametric method
+\item{method}{`"dml"` (default) or `"replicate"`. The replicate method
 currently requires the traditional estimator (`estMethod = "trad"`) and
-uses its full-sample logistic-MLE/OLS nuisance fits without cross-fitting.}
+uses its full-sample logistic-MLE/OLS nuisance fits without cross-fitting.
+Legacy names `"crossfit"` and `"parametric"` remain aliases for `"dml"`
+and `"replicate"`. Both methods check the source ATT/IF by numerical replay;
+`"replicate"` additionally uses the source nuisance-fitting procedure.}
 }
 \value{
 A `dml_drdid` object inheriting from `dml`, with the external fit,
   ordered panel data, source diagnostics and joint estimator covariance.
+  `adapter_info$method` and `refit_spec$method` store the canonical method.
+  Historical `adapter_info$mode` and `parametric` storage fields are retained
+  for compatibility; they are not the public method names.
 }
 \description{
 Retains the external ATT and influence function and estimates the residual
@@ -68,8 +80,9 @@ full-sample logistic/OLS fitting. The source fit is
 replayed to check its consistency with the supplied, ordered estimation data.
 }
 \details{
-Supports panel `imp` and `trad`, equal weights, successful source
-  estimation, and no active source or DML propensity trimming/clipping.
+Supports panel `imp` and `trad`, equal weights and successful source
+  estimation. Source and DML probability clipping are rejected. Active source
+  control trimming is supported only for `method = "replicate"` with `trad`.
   Acceptance uses the input structure, the required DRDID function interfaces,
   and a numerical ATT/IF replay, not an installed-version equality check.
   DRDID 1.3.0 is tested; other versions must satisfy these same checks.
@@ -86,7 +99,7 @@ Supports panel `imp` and `trad`, equal weights, successful source
   unit-by-repetition matrix otherwise; `rep_seeds` records the DML seeds and
   `dml.att` contains the auxiliary ATT for every repetition.
 
-  The parametric method preserves the external ATT and IF and computes new
+  The replicate method preserves the external ATT and IF and computes new
   sensitivity moments with full-sample nuisance estimation effects in the
   joint IF. It requires regular fixed-dimensional fits, overlap and finite
   moments; the sensitivity interpretation additionally requires the relevant
@@ -97,4 +110,18 @@ Supports panel `imp` and `trad`, equal weights, successful source
   `parametric` fit diagnostics and result-level `nuisance.correction` vectors.
   Benchmarks retain the method and reject learner overrides. See
   `inst/notes/parametric-inference.md` in the source package for the derivation.
+
+  With active source control trimming, replicate retains the source ATT/IF
+  and uses all units and untrimmed propensities for sensitivity moments.
+  Valid trimmed ATT inference requires a correct control conditional mean,
+  a fixed threshold, positive population retained-control weight and a regular
+  boundary (e.g. bounded propensity density near the threshold, without an atom
+  at it), in addition to the preceding conditions. The source IF includes the
+  nonvanishing outcome-model estimation effect; the boundary term vanishes
+  under the stated correct-mean conditions. Generic misspecification-robust
+  inference is not claimed with active trimming. See
+  `inst/notes/replicate-trimming.md` for sufficient conditions and the proof.
+  `adapter_info$diagnostics$source.trimming` records the threshold, trimmed
+  control indices/IDs and retained weight. Population assumptions cannot be
+  verified from these diagnostics. Benchmark refits recompute their own masks.
 }

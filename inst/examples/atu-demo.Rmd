@@ -1,0 +1,31 @@
+---
+title: "ATU with the DiD adapter"
+output: html_document
+---
+
+Requires the locally installed `dml.sensemakr` 0.2.2.9012 and `did`.
+This illustrates computation on `mpdta`; it does not establish the identifying
+assumptions for these data. ATU here targets the selected never-treated counties
+if they adopted in 2007. Its causal interpretation requires comparability of
+potential changes **under treatment**, not just ordinary ATT parallel trends.
+
+```{r}
+library(did)
+library(dml.sensemakr)
+data(mpdta)
+
+fit <- att_gt(yname = "lemp", tname = "year", idname = "countyreal",
+              gname = "first.treat", xformla = ~ lpop, data = mpdta,
+              bstrap = FALSE, cband = FALSE, compute_inffunc = FALSE)
+
+m <- dml_from_did(fit, group = 2007, time = 2007,
+                  method = "dml_refit", target = "atu",
+                  dml_args = list(yreg = "lm", dreg = "glm", d.class = TRUE,
+                                  cf.folds = 3, cf.seed = 1))
+summary(m)
+dml_bounds(m, cf.y = 0.05, cf.d = 0.05)
+```
+
+The last line gives bounds for the chosen confounding strengths, under the
+corresponding long-model ATU identifying assumption. ATU pre-trend benchmarking
+is not implemented; covariate benchmarking is available through `dml_benchmark()`.

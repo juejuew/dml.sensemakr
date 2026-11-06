@@ -72,7 +72,7 @@ near zero. No threshold, p-value screening or nonregular alternative is claimed.
 
 ## did convenience interface
 
-    m <- dml_from_did(fit, group, time, method = "parametric")
+    m <- dml_from_did(fit, group, time, method = "replicate")
     b <- did_pretrend_bounds(m, pre_period = c(base, end), k = c(0, 1, 2))
     b$bounds
     pretrend_bounds(m, b$pre_model, k = c(0, 1, 2), type = "scaled")

@@ -2,40 +2,63 @@
 % Please edit documentation in R/did-adapter.R
 \name{dml_from_did}
 \alias{dml_from_did}
-\title{Adapt a did group-time ATT for sensitivity analysis}
+\title{Adapt a did cell for ATT or ATU sensitivity analysis}
 \usage{
 dml_from_did(
   fit,
   group,
   time,
   dml_args = list(),
-  method = c("crossfit", "parametric")
+  method = c("dml", "replicate", "dml_refit"),
+  target = c("att", "atu")
 )
 }
 \arguments{
-\item{fit}{An \code{MP} object from \code{did::att_gt()}, estimated with \code{est_method = "dr"}.
+\item{fit}{An \code{MP} object from \code{did::att_gt()}. The \code{"dml"} and \code{"replicate"}
+methods require \code{est_method = "dr"}.
 The equal-weight hybrid path requires saved influence functions
-(\code{compute_inffunc = TRUE}) and compatible DRDID panel interfaces.}
+(\code{compute_inffunc = TRUE}) and compatible DRDID panel interfaces.
+For \code{"dml_refit"}, built-in \code{"dr"}, \code{"reg"} and \code{"ipw"} source estimators
+are supported, and saved influence functions are unnecessary.}
 
 \item{group, time}{Numeric cohort and outcome-period labels of one estimated
 post-treatment cell (\code{time >= group}).}
 
 \item{dml_args}{Named list of DML settings; see \code{\link[=dml_from_drdid]{dml_from_drdid()}}.
-Must be empty for \code{method = "parametric"}.}
+\code{dirty.tuning} defaults to \code{FALSE}; \code{TRUE} selects hyperparameters on the
+full cell sample before fitting each cross-fitting training fold.
+Must be empty for \code{method = "replicate"}.}
 
-\item{method}{\code{"crossfit"} (default) retains the existing cross-fitted method.
-\code{"parametric"} uses the source cell's full-sample logistic MLE and control-arm
+\item{method}{\code{"dml"} (default) retains the existing cross-fitted method.
+\code{"replicate"} uses the source cell's full-sample logistic MLE and control-arm
 linear regression, with no sample splitting. Requires equal weights and no
-active source trimming/clipping. It never switches to an unweighted refit.}
+source probability clipping. Source control trimming is supported under the
+model and boundary conditions below. It never switches to an unweighted refit.
+Legacy names \code{"crossfit"} and \code{"parametric"} are accepted as aliases.
+These two methods verify the source fit; \code{"replicate"} also follows its nuisance
+fitting procedure rather than using cross-fitted DML sensitivity moments.
+\code{"dml_refit"} uses only the saved data/design and cell selection: all three
+estimates (\code{theta.s}, \code{sigma2.s}, \code{nu2.s}) and their IFs come from \code{\link[=dml]{dml()}}.
+It requires equal weights and does not reproduce or preserve the source ATT.}
+
+\item{target}{\code{"att"} (default) targets the selected treated cohort.
+\code{"atu"} is available only with \code{method = "dml_refit"}: it targets the
+selected cell's control units under hypothetical adoption in \code{group},
+evaluated at \code{time}. The control population follows the saved
+\code{control_group} and anticipation rules and can change across cells.
+Select the target here; \code{dml_args$target}, if supplied, must agree.}
 }
 \value{
 With equal weights, a \code{dml_did} object inheriting from \code{dml}. With
-unequal weights, an ordinary \code{dml} object with native DML refitting behavior.
+unequal weights and \code{method = "dml"}, an ordinary \code{dml} object with native
+DML refitting behavior; the other methods reject unequal weights.
 Both contain \code{adapter_data} (the frozen two-period panel), \code{external_fit}
 (the original MP object), and \code{adapter_info$cell} (cell labels, base period
-and sample sizes). \code{adapter_info$mode} is \code{"hybrid"}, \code{"parametric"} or
-\code{"unweighted_dml"}. Source IF row indices and scale are recorded for the
-two source-preserving modes. Parametric results include \code{parametric}
+and sample sizes). \code{adapter_info$mode} is \code{"hybrid"}, \code{"parametric"},
+\code{"unweighted_dml"} or \code{"dml_refit"}. Source IF row indices and scale are recorded for the
+two source-preserving modes. These historical mode labels are retained for
+compatibility; \code{adapter_info$method} and \code{refit_spec$method} use the canonical
+\code{"dml"}/\code{"replicate"}/\code{"dml_refit"} names. Replicate results include \code{parametric}
 (coefficients, gradients, assumptions) and each result's \code{nuisance.correction}.
 }
 \description{
@@ -43,6 +66,8 @@ Uses the estimation data saved by \code{did::att_gt()}. With equal sampling weig
 preserves the selected ATT and IF and estimates sensitivity moments using
 cross-fitting (default) or full-sample parametric fitting. With unequal weights,
 the default method refits the entire cell using unweighted DML.
+\code{method = "dml_refit"} explicitly estimates the selected ATT/ATU and both sensitivity
+moments using the same cross-fitted DML estimator on an equal-weight cell.
 }
 \details{
 Supports the balanced panel estimator path, either control group,
@@ -80,7 +105,7 @@ bootstrap SEs and simultaneous critical values are not reused. Validity
 requires the identifying and nuisance conditions of the estimators. These
 checks establish computational consistency, not model correctness.
 
-The parametric method uses DRDID's actual logistic-MLE/OLS solvers and the
+The replicate method uses DRDID's actual logistic-MLE/OLS solvers and the
 saved cell design. It retains the source ATT/IF and computes new sensitivity
 moments: these moments are not quantities originally returned by did.
 Joint inference includes the full-sample nuisance estimation effects via
@@ -89,6 +114,15 @@ requires correct nuisance functions, regular fixed-dimensional models,
 overlap, finite moments and the original identifying conditions. Sandwich
 corrections do not repair a misspecified sensitivity target. Each reduced
 benchmark model needs its own nuisance validity conditions.
+Active source control trimming is allowed for replicate: the source ATT/IF
+use the original trimming rule, while sensitivity moments retain all units
+and untrimmed propensities. This requires a correct control conditional mean,
+a fixed threshold, positive retained-control population weight and a regular
+trimming boundary without an atom at the cutoff. Generic misspecification-
+robust inference is not claimed for this path. These population conditions
+are not verified by numerical replay. Diagnostics are recorded in
+\code{adapter_info$diagnostics$source.trimming}; see \code{\link[=dml_from_drdid]{dml_from_drdid()}} and
+\code{inst/notes/replicate-trimming.md} for the derivation and sufficient conditions.
 Parametric fits are deterministic and store \code{info$cf.folds = 0L}, one result,
 empty \code{fold_id}/\code{rep_seeds}, and no auxiliary DML estimates. Benchmarking
 refits the same logistic/OLS procedure on the frozen cell and rejects learner
@@ -105,6 +139,55 @@ covariance; downstream methods retain their mean/median aggregation.
 A failure in any hybrid repetition rejects that cell. Its \code{adapter_info$fold_id} is a
 vector for one repetition or a unit-by-repetition matrix otherwise;
 \code{rep_seeds} and \code{dml.att} contain one value per repetition.
+
+The explicit \code{"dml_refit"} mode keeps the same saved units, outcome change,
+baseline covariates, control-group and anticipation rules. It does not need
+a finite original ATT or original IF, and does not inherit source trimming.
+It cannot restore observations removed during did preprocessing. All native
+DML estimates, SEs and IFs are retained; each result additionally stores
+\code{joint.covariance} for the three estimates, including the sample-size factor.
+Repetitions use their own common nuisance fits for all three quantities.
+Covariate benchmarks, and pre-trend benchmarks for ATT, refit all three quantities by DML
+with matching units, folds and repetition order. No DRDID replay is performed.
+The default remains \code{"dml"} for backward compatibility.
+
+This mode uses the conditional, uncentered score for the selected target
+(\code{model = "npm"}, \code{conditional = TRUE}, \code{centered = FALSE}), with flexible
+nuisance learners. Active DML propensity clipping, predictions outside
+\verb{(0, 1)}, nonpositive sensitivity scales and invalid training folds stop
+the fit. Setting \code{ps.trim = 0} removes the clipping threshold but does not
+establish population overlap. Valid inference still requires the DiD
+identifying assumptions, overlap, moment conditions and nuisance convergence
+rates for the orthogonal scores. Dirty tuning is optional and requires
+additional control of selection/overfitting; it is not a validity guarantee.
+
+\strong{ATU identification.} Write \code{b} for the saved pre-treatment baseline,
+\code{D = 1} for the selected cohort, and \code{D = 0} for the selected controls.
+\code{Y_t(g)} denotes the outcome under adoption in period \code{g}, whereas \code{Y_t(0)}
+denotes no adoption through \code{t}. The ATU is
+\verb{E[Y_t(g) - Y_t(0) | D = 0]} within this selected cell. Its short estimate
+uses the treated-arm regression \verb{m1(X) = E[Y_t - Y_b | D = 1, X]}.
+A sufficient identifying condition is equality across \code{D} of
+\code{E[Y_t(g) - Y_b(0) | X, D]}, together with consistency, an unaffected
+baseline, and overlap on the control covariate support. Ordinary parallel
+trends in untreated potential outcomes alone does not identify ATU.
+Sensitivity analysis instead allows this condition to hold given \verb{(X, U)}
+for omitted variables \code{U}, with explicit bounds on their strength.
+Conditional mean models, overlap, finite moments and DML convergence rates
+for all sensitivity moments remain necessary; double robustness of the
+effect estimate alone is insufficient for sensitivity inference.
+
+ATU uses treated-arm residual variance and inverse treatment odds, with
+all estimates and IFs in \code{results$main$untr}. The effect is always
+treatment minus no treatment. No source ATT or IF is reused. Metadata in
+\code{adapter_info$target_population} and \code{adapter_info$identification} records
+the target and assumptions, not a test that those assumptions hold.
+\code{original.se}, when present, still refers to the source ATT and is labeled
+by \code{original.target = "att"}. Fixed-strength bounds, robustness values,
+covariate benchmarking and batch conversion support ATU. Pre-trend
+benchmarking rejects ATU: untreated pre-period contrasts alone do not
+calibrate bias in treatment-onset potential changes. See
+\code{inst/notes/did-atu.md} for identification, score and symmetry derivations.
 }
 \seealso{
 \code{\link[=dml_from_did_cells]{dml_from_did_cells()}}, \code{\link[=did_cell_apply]{did_cell_apply()}}, \code{\link[=dml_from_drdid]{dml_from_drdid()}}

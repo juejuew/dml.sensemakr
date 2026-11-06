@@ -1,3 +1,65 @@
+# dml.sensemakr 0.2.2.9012
+
+* Add `target = "atu"` to both did adapters with `method = "dml_refit"`.
+  Keep ATT as the default and reject ATU for source-preserving methods.
+* Fit the treated outcome arm and use the native conditional ATU estimates,
+  all IFs, sensitivity scale and joint covariance; retain the original sign
+  treatment minus no treatment. Validate the appropriate outcome-training arm.
+* Preserve ATU through covariate benchmarks, repetitions, serialization, batch
+  fitting, bounds and summaries. Record the selected control target population.
+* State treatment-onset parallel trends and long-model sensitivity assumptions;
+  ordinary ATT parallel trends alone is insufficient. Explicitly reject ATU
+  pre-trend benchmarking pending a separate transport restriction.
+* Add independent cell/score oracles, ATT/ATU symmetry and regression tests,
+  a theory note and a compact R Markdown demo.
+
+# dml.sensemakr 0.2.2.9011
+
+* Add `method = "dml_refit"` to the did adapters: extract the saved cell data
+  and design, then estimate ATT, sigma2.s, nu2.s and all their influence
+  functions in one native DML fit. Original ATT/IF values and source control
+  trimming are not reused. Source influence functions need not be saved.
+* Support built-in dr/reg/ipw MP objects with equal weights and a balanced
+  panel. Preserve the existing dml/replicate methods and legacy aliases.
+* Integrate batch fitting, covariate benchmarks and pre-trend benchmarks with
+  matched folds, repetitions, tuning settings and joint IF inference.
+* Reject active DML clipping, invalid overlap or nonregular sensitivity moments;
+  add a compact R Markdown demo and native-DML equivalence tests.
+
+# dml.sensemakr 0.2.2.9010
+
+* Explicitly require the control OLS solver to report `converged = TRUE` for
+  replicate sensitivity inference. A false, missing or indeterminate flag stops
+  the fit even if coefficients are finite. Existing coefficient, prediction,
+  matrix and source-replay checks remain in place. Valid fits are unchanged.
+
+# dml.sensemakr 0.2.2.9009
+
+* Support traditional DRDID control residual trimming with `method = "replicate"`,
+  including did cells, covariate benchmarks and pre-trend benchmarks. Preserve
+  the source ATT/IF while computing sensitivity moments on all source units
+  using untrimmed propensities. Recompute each benchmark's mask after refitting.
+* Independently reconstruct the source ATT IF, including nuisance effects;
+  record control trimming indices, IDs, threshold and retained weight.
+* State and derive the correct-control-mean and regular-boundary conditions for
+  active trimming. No generic misspecification-robust inference is claimed on
+  this path. Source clipping and active trimming in the DML adapter stay rejected.
+* Add derivative checks, integration tests, a continuous-boundary simulation
+  script and a compact trimming demo.
+
+# dml.sensemakr 0.2.2.9008
+
+* Rename panel-adapter methods to `"dml"` (default) and `"replicate"`.
+  Keep `"crossfit"` and `"parametric"` as compatibility aliases, including
+  when reading old saved objects for covariate or pre-trend benchmarking.
+* Allow `dml_args$dirty.tuning = TRUE` in the DML adapters. Clean tuning remains
+  the adapter default. Full-sample tuning selects hyperparameters before
+  fold-specific training; benchmarking retains the setting and retunes each fit.
+* Record canonical method names and report the tuning mode. The replicate
+  method still uses the source logistic-MLE/OLS fits and rejects DML options.
+  Statistical assumptions, source ATT/IF preservation and overlap checks remain
+  unchanged; full-sample tuning requires suitable selection conditions.
+
 # dml.sensemakr 0.2.2.9007
 
 * Add `pretrend_bounds()` for bias-magnitude and scale-adjusted pre-trend

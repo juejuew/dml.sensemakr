@@ -1,6 +1,7 @@
 # Compatibility is established from the saved panel and a cell ATT/IF replay.
 # Read the saved estimation sample; never rerun global preprocessing.
-.did_adapter_context <- function(fit) {
+.did_adapter_context <- function(fit, method = "dml") {
+  dml.refit <- identical(.panel_adapter_method(method), "dml_refit")
   # An installed version is diagnostic metadata, not the producer of a saved fit.
   version <- .adapter_package_version("did")
   if (!is.list(fit) || !inherits(fit, "MP"))
@@ -23,7 +24,10 @@
     .drdid_stop("fix_weights = 'varying' uses the repeated-cross-section estimator, even for balanced panels.")
   if (!is.null(dp$fix_weights) && !dp$fix_weights %in% c("base_period", "first_period"))
     .drdid_stop("Unknown fix_weights setting.")
-  if (!identical(dp$est_method, "dr"))
+  if (dml.refit && !(is.character(dp$est_method) && length(dp$est_method) == 1L &&
+                    dp$est_method %in% c("dr", "reg", "ipw")))
+    .drdid_stop("method = 'dml_refit' supports built-in did estimators dr, reg and ipw, not custom estimators.")
+  if (!dml.refit && !identical(dp$est_method, "dr"))
     .drdid_stop("Only est_method = 'dr' is supported; custom, reg and ipw estimators are excluded.")
   if (length(setdiff(dp$clustervars, dp$idname)))
     .drdid_stop("Clustering above the individual level requires clustered joint sensitivity inference.")
@@ -64,7 +68,10 @@
   }
   if (!".w" %in% names(dat)) .drdid_stop("The saved normalized sampling weights are missing.")
   unequal.weights <- check.weights(dat$.w) || unequal.weights
-  drdid.version <- if (unequal.weights) .adapter_package_version("DRDID") else .drdid_require()
+  if (dml.refit && unequal.weights)
+    .drdid_stop("method = 'dml_refit' currently requires equal sampling weights; weighted DML sensitivity inference is not implemented.")
+  needs.source <- !dml.refit && !unequal.weights
+  drdid.version <- if (needs.source) .drdid_require() else .adapter_package_version("DRDID")
   if (!inherits(dp$xformla, "formula") || length(dp$xformla) != 2L)
     .drdid_stop("The saved xformla must be a one-sided formula.")
   saved.times <- if (dp$faster_mode) dp$time_periods else dp$tlist
@@ -78,7 +85,7 @@
       anyDuplicated(data.frame(group = fit$group, time = fit$t)))
     .drdid_stop("The source ATT cells must have unique, finite group-time labels.")
   if.rows <- NULL
-  if (!unequal.weights) {
+  if (needs.source) {
     inf <- fit$inffunc
     if (is.null(inf)) .drdid_stop("The source has no IF. Refit did::att_gt() with compute_inffunc = TRUE.")
     if (length(dim(inf)) != 2L || !identical(as.integer(dim(inf)), c(as.integer(N), as.integer(m))))
@@ -131,18 +138,19 @@
   }
   list(fit = fit, dp = dp, data = dat, ids = ids, times = times, rows = rows,
        cohorts = cohorts, X = X, if.rows = if.rows, unweighted.refit = unequal.weights,
+       needs.source = needs.source,
        N = N, version = version, drdid.version = drdid.version,
        layout = if (dp$faster_mode) "panel_tensors" else "panel_formula")
 }
 
-.did_cell_sample <- function(ctx, group, time) {
+.did_cell_sample <- function(ctx, group, time, allow.trimming = FALSE) {
   scalar <- function(x) is.numeric(x) && length(x) == 1L && is.finite(x)
   if (!scalar(group) || !scalar(time)) .drdid_stop("group and time must be finite numeric scalars.")
   if (time < group) .drdid_stop("Only post-treatment cells (time >= group) are supported.")
   j <- which(ctx$fit$group == group & ctx$fit$t == time)
   if (length(j) != 1L) .drdid_stop("The requested (group, time) cell is absent from the MP object.")
   theta <- ctx$fit$att[j]
-  if (!ctx$unweighted.refit && !is.finite(theta))
+  if (ctx$needs.source && !is.finite(theta))
     .drdid_stop("The requested cell has no finite source ATT.")
   pre <- which(ctx$times + ctx$dp$anticipation < group)
   if (!length(pre)) .drdid_stop("The requested cohort has no valid pre-treatment base period.")
@@ -168,8 +176,8 @@
   sample$i.weights <- sample$i.weights / mean(sample$i.weights)
   cell <- list(group = group, time = time, base_period = ctx$times[pre],
                column = j, n_cell = n, n_global = ctx$N, if_rows = if.rows,
-               if_scale = if (ctx$unweighted.refit) NULL else n / ctx$N)
-  if (ctx$unweighted.refit) return(list(sample = sample, cell = cell))
+               if_scale = if (ctx$needs.source) n / ctx$N else NULL)
+  if (!ctx$needs.source) return(list(sample = sample, cell = cell))
 
   phi.full <- as.numeric(ctx$fit$inffunc[, j])
   if (length(phi.full) != ctx$N || any(!is.finite(phi.full)))
@@ -180,7 +188,8 @@
   # did stores (N / n_cell) * phi_cell. Undo this before cell-level DML.
   phi <- (n / ctx$N) * phi.full[if.rows]
   spec <- list(method = "trad", trim.level = 0.995, phi = phi)
-  diagnostics <- .panel_check_source(theta, sample, spec)
+  diagnostics <- .panel_check_source(theta, sample, spec,
+                                      allow.trimming = allow.trimming)
   list(sample = sample, theta = theta, phi = phi, diagnostics = diagnostics,
        cell = cell)
 }

@@ -3,7 +3,7 @@
 # estimating equations and the interpretation under model misspecification.
 .panel_parametric_args <- function(args) {
   if (!is.list(args) || length(args))
-    .drdid_stop("method = 'parametric' requires an empty dml_args list: source logistic/OLS models are fixed and cross-fitting is not used.")
+    .drdid_stop("method = 'replicate' requires an empty dml_args list: source logistic/OLS models are fixed and cross-fitting is not used.")
   invisible(NULL)
 }
 
@@ -16,7 +16,7 @@
 
 .panel_parametric_aux <- function(sample, theta, phi, spec, diagnostics) {
   if (!identical(spec$method, "trad"))
-    .drdid_stop("method = 'parametric' currently supports the traditional logistic-MLE/OLS estimator only (estMethod = 'trad').")
+    .drdid_stop("method = 'replicate' currently supports the traditional logistic-MLE/OLS estimator only (estMethod = 'trad').")
   .drdid_check_weights(sample$i.weights, length(sample$D))
   y <- sample$y1 - sample$y0
   d <- sample$D
@@ -34,6 +34,8 @@
   or.fit <- fit.fun(x = X[control, , drop = FALSE], y = y[control],
                     family = stats::gaussian(link = "identity"),
                     weights = sample$i.weights[control])
+  if (!isTRUE(or.fit$converged))
+    .drdid_stop("Full-sample control OLS did not report successful convergence (converged = TRUE); replicate sensitivity inference is unavailable.")
   if (!isTRUE(ps.fit$converged) ||
       length(ps.fit$coefficients) != ncol(X) ||
       length(or.fit$coefficients) != ncol(X) ||
@@ -41,17 +43,22 @@
     .drdid_stop("Full-sample logistic/OLS fitting failed or returned invalid coefficients.")
   e <- as.numeric(ps.fit$fitted.values)
   g <- as.numeric(X %*% or.fit$coefficients)
-  if (length(e) != n || any(!is.finite(c(e, g))) ||
-      any(e <= 0 | e >= 1 - 1e-6) || any(e[control] >= spec$trim.level))
-    .drdid_stop("Source propensity trimming/clipping is active; parametric sensitivity inference requires the untrimmed panel estimand.")
+  if (length(e) != n || any(!is.finite(c(e, g))))
+    .drdid_stop("Full-sample nuisance predictions must be finite and aligned with the source units.")
+  trimming <- .panel_source_trimming(e, sample, spec, allow.trimming = TRUE)
   close <- function(a, b) isTRUE(all.equal(as.numeric(a), as.numeric(b),
                                           tolerance = 1e-7, check.attributes = FALSE))
   if (!close(e, diagnostics$propensity))
     .drdid_stop("Full-sample propensities do not reproduce the checked source nuisance fit.")
   residual <- y - g
   odds <- e / (1 - e)
-  reconstructed <- mean(residual[d == 1]) -
-    sum(odds[control] * residual[control]) / sum(odds[control])
+  # Match the source's control-only residual trimming and normalization.
+  # All units, all controls in OLS, and raw e remain in the sensitivity moments.
+  q <- (1 - d) * (e < spec$trim.level) * odds
+  A <- mean(q)
+  treated.residual <- mean(residual[d == 1])
+  control.residual <- mean(q * residual) / A
+  reconstructed <- treated.residual - control.residual
   if (!close(reconstructed, theta))
     .drdid_stop("Full-sample nuisance fits do not reproduce the source ATT.")
 
@@ -66,6 +73,19 @@
     .panel_parametric_inverse(H.gamma, "propensity")
   p <- mean(d)
   psi.p <- d - p
+
+  # Independently verify the source IF, including OLS estimation effects that
+  # need not vanish after trimming. The derivative of the hard mask is omitted
+  # by DRDID: its population boundary term is zero under correct control means
+  # and a regular boundary (see replicate-trimming.md), not in general under
+  # misspecification. Numerical replay alone cannot establish that assumption.
+  grad.theta.beta <- colMeans(q * X) / A - colMeans(d * X) / p
+  grad.theta.gamma <- -colMeans(q * (residual - control.residual) * X) / A
+  reconstructed.phi <- as.numeric(d / p * (residual - treated.residual) -
+    q / A * (residual - control.residual) +
+    psi.beta %*% grad.theta.beta + psi.gamma %*% grad.theta.gamma)
+  if (!close(reconstructed.phi, phi))
+    .drdid_stop("Full-sample nuisance fits and source trimming rule do not reproduce the source ATT influence function.")
 
   result <- att.npm.cond(y, d, yhat0 = g, dhat = e,
                          phat = rep(p, n), trim = 0, centered = FALSE)
@@ -103,7 +123,7 @@
   fit <- list(data = list(y = y, d = d, x = X),
     info = list(model = "npm", target = "att", conditional = TRUE,
       centered = FALSE, cf.folds = 0L, cf.reps = 1L, cross.fitting = FALSE,
-      nuisance.method = "parametric", dirty.tuning = FALSE,
+      nuisance.method = "replicate", dirty.tuning = FALSE,
       yreg = list(yreg0 = list(method = "lm"), yreg1 = NULL),
       dreg = list(method = "glm")),
     fits = list(list(preds = list(yhat0 = g, yhat1 = NULL, dhat = e,
@@ -113,12 +133,18 @@
     parametric = list(coefficients = list(outcome = or.fit$coefficients,
                                           propensity = ps.fit$coefficients),
       treated.share = p, reconstructed.att = reconstructed,
+      reconstructed.att.if = reconstructed.phi,
       moment.gradients = list(sigma2.beta = grad.beta, nu2.gamma = grad.gamma,
-                               nu2.p = grad.p),
+                               nu2.p = grad.p, theta.beta = grad.theta.beta,
+                               theta.gamma = grad.theta.gamma),
       inference = "joint IF with full-sample nuisance estimation effects",
       assumptions = c("fixed-dimensional regular logistic/linear models",
         "correct nuisance functions for the sensitivity target",
-        "overlap and finite moments", "independent panel units")))
+        "overlap and finite moments", "independent panel units",
+        if (trimming$active) c(
+          "correct control conditional mean is required for trimmed ATT inference",
+          "regular trimming boundary; no probability mass at the threshold",
+          "positive retained control weight in the population"))))
   class(fit) <- "dml"
   list(fit = fit, args = list(), fold = integer(0), rep_seeds = integer(0))
 }

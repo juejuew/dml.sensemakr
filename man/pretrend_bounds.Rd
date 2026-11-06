@@ -18,11 +18,11 @@ pretrend_bounds(
 }
 \arguments{
 \item{model}{A post-treatment, equal-weight panel adapter object returned by
-\code{\link[=dml_from_did]{dml_from_did()}} or \code{\link[=dml_from_drdid]{dml_from_drdid()}}.}
+\code{\link[=dml_from_did]{dml_from_did()}} or \code{\link[=dml_from_drdid]{dml_from_drdid()}}, with target \code{"att"}.}
 
 \item{pre_model}{A panel adapter object for a genuinely untreated comparison.
 It must use the same unit IDs, treatment-group indicator, estimation method,
-and (for cross-fitting) partitions and repetitions as \code{model}. Both objects
+and (for DML) partitions and repetitions as \code{model}. Both objects
 must have explicitly supplied IDs; row numbers generated for wide input are
 not sufficient. Pre-period outcomes and covariates may differ.}
 
@@ -78,6 +78,9 @@ requires strictly positive finite pre/post sensitivity scales.
 This low-level function cannot verify dates in arbitrary wide-panel objects.
 The caller is responsible for selecting genuinely pre-treatment outcomes.
 Use \code{\link[=did_pretrend_bounds]{did_pretrend_bounds()}} to construct and check the comparison from a did fit.
+ATU objects are rejected. Untreated pre-period contrasts do not by themselves
+calibrate bias in treated potential changes; no ATU transport restriction is
+implemented. Use fixed-strength or covariate-based ATU sensitivity analysis.
 }
 \references{
 Wang, J., Sant'Anna, P. H. C., Chernozhukov, V., and Cinelli, C. (2026).

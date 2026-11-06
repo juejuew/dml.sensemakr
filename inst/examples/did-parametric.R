@@ -14,7 +14,7 @@ source_fit <- did::att_gt(yname = "y", tname = "time", idname = "id", gname = "g
   xformla = ~ x + z, data = dat, panel = TRUE, est_method = "dr",
   bstrap = FALSE, cband = FALSE, compute_inffunc = TRUE)
 
-m <- dml_from_did(source_fit, group = 3, time = 4, method = "parametric")
+m <- dml_from_did(source_fit, group = 3, time = 4, method = "replicate")
 print(m)
 cell <- m$adapter_info$cell
 stopifnot(isTRUE(all.equal(unname(coef(m)), source_fit$att[cell$column])),
@@ -26,7 +26,7 @@ sensemakr(m, cf.y = 0.05, cf.d = 0.05)
 b <- dml_benchmark(m, "z")
 benchmark_bounds(m, b, kY = 0.5, kD = 0.5)
 
-batch <- dml_from_did_cells(source_fit, method = "parametric")
+batch <- dml_from_did_cells(source_fit, method = "replicate")
 print(batch)
 did_cell_apply(batch, confidence_bounds, cf.y = 0.05, cf.d = 0.05)
 

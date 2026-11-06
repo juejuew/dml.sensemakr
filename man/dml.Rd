@@ -58,7 +58,7 @@ dml_gate(dml.fit, groups, ...)
 
 \item{dreg}{same as \code{reg}, but specifies arguments for the treatment regression alone. Default is the same value of \code{reg}.}
 
-\item{dirty.tuning}{should the tuning of the machine learning method happen within each cross-fit fold ("clean"), or using all the data ("dirty")? Default is dirty tuning (\code{dirty.tuning = TRUE}). As long as the number of choices for the tuning parameters is not too big, dirty tuning is faster and should not affect the asymptotic guarantees of DML.}
+\item{dirty.tuning}{should the tuning of the machine learning method happen within each cross-fit fold ("clean"), or using all the data ("dirty")? Default is dirty tuning (\code{dirty.tuning = TRUE}). Full-sample tuning retains cross-fitted training and prediction but introduces selection dependence; valid inference requires suitable nuisance convergence and tuning-selection conditions. Panel adapters default to clean tuning.}
 
 \item{save.models}{should the fitted models of each iteration be saved? Default is \code{FALSE}. Note that setting this to true could end up using a lot of memory.}
 

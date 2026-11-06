@@ -16,12 +16,17 @@ can use the hybrid result.
 ## Supported scope
 
 The adapter supports two-period balanced panels,
-`estMethod = "imp"` or `"trad"`, and constant positive sampling weights. It requires `inffunc = TRUE`. Active source trimming,
+`estMethod = "imp"` or `"trad"`, and constant positive sampling weights. It requires `inffunc = TRUE`. With the default DML method, active source trimming,
 source probability clipping, and DML probability clipping are rejected. The
 improved estimator must use successful IPT estimation (`ps.flag` 0 or 1).
 
+The replicate method supports traditional source control residual trimming,
+while retaining all units and raw propensities in the sensitivity moments.
+Inference requires a correct control conditional mean and a regular trimming
+boundary; see `inst/notes/replicate-trimming.md`. Source clipping stays rejected.
+
 Repeated cross-sections, unequal sampling weights, clustered inference,
-subgroup ATTs, active trimming and joint
+subgroup ATTs and joint
 bootstrap inference need separate extensions. A source fit estimated with
 bootstrap standard errors can be supplied, but the adapter reports analytic
 joint-IF inference; it does not reuse the source bootstrap draws or SE.
@@ -81,9 +86,12 @@ benchmark_bounds(hybrid, benchmark)
 The learners above illustrate a small correctly specified parametric example.
 They are not a universal nuisance-model recommendation. `dml_args` accepts DML
 learner specifications and training options. The adapter fixes `model = "npm"`,
-`target = "att"`, `conditional = TRUE`, `centered = FALSE`,
-`dirty.tuning = FALSE`, and `y.class = FALSE`. Hyperparameter tuning, if requested,
-therefore takes place within the training folds. The default seed is 1 and the
+`target = "att"`, `conditional = TRUE`, `centered = FALSE`, and `y.class = FALSE`.
+With `method = "dml"`, `dirty.tuning = FALSE` is the default: tuning takes place
+within the training folds. To tune on the full sample first and then refit each
+training fold, use `dml_args = list(dirty.tuning = TRUE, ...)`. The outcome model
+is tuned on controls only. Valid inference still requires suitable nuisance
+convergence and tuning-selection conditions. The default seed is 1 and the
 default number of folds is 5. `cf.reps` defaults to 1 and accepts positive
 integers up to the DML seed-pool size of 1,000,000. Omitted `yreg` and `dreg` inherit `reg`, which
 defaults to `"ranger"`. For a constant-only design, unspecified predictor

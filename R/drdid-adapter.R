@@ -21,16 +21,29 @@
 #'   supplied order and do not independently establish the original IF mapping.
 #' @param dml_args Named list of DML options, such as learners, `cf.folds`,
 #'   `cf.reps`, `cf.seed` and `ps.trim`. Repetitions default to 1. The estimand
-#'   and clean tuning are fixed. Every repetition must pass the overlap checks;
+#'   is fixed. Every repetition must pass the overlap checks;
 #'   active probability clipping is not supported.
-#'   Must be empty for `method = "parametric"`.
-#' @param method `"crossfit"` (default) or `"parametric"`. The parametric method
+#'   Tuning defaults to `dirty.tuning = FALSE` (within training folds).
+#'   Set `dirty.tuning = TRUE` to select hyperparameters using the full cell
+#'   sample (the control arm for the outcome model), then refit on each training
+#'   fold. Must be a single non-missing logical. Benchmark refits retain this
+#'   choice and retune on their own data. Full-sample tuning introduces
+#'   selection dependence; inference requires appropriate nuisance-rate and
+#'   tuning-selection conditions. Must be empty for `method = "replicate"`.
+#' @param method `"dml"` (default) or `"replicate"`. The replicate method
 #'   currently requires the traditional estimator (`estMethod = "trad"`) and
 #'   uses its full-sample logistic-MLE/OLS nuisance fits without cross-fitting.
+#'   Legacy names `"crossfit"` and `"parametric"` remain aliases for `"dml"`
+#'   and `"replicate"`. Both methods check the source ATT/IF by numerical replay;
+#'   `"replicate"` additionally uses the source nuisance-fitting procedure.
 #' @return A `dml_drdid` object inheriting from `dml`, with the external fit,
 #'   ordered panel data, source diagnostics and joint estimator covariance.
-#' @details Supports panel `imp` and `trad`, equal weights, successful source
-#'   estimation, and no active source or DML propensity trimming/clipping.
+#'   `adapter_info$method` and `refit_spec$method` store the canonical method.
+#'   Historical `adapter_info$mode` and `parametric` storage fields are retained
+#'   for compatibility; they are not the public method names.
+#' @details Supports panel `imp` and `trad`, equal weights and successful source
+#'   estimation. Source and DML probability clipping are rejected. Active source
+#'   control trimming is supported only for `method = "replicate"` with `trad`.
 #'   Acceptance uses the input structure, the required DRDID function interfaces,
 #'   and a numerical ATT/IF replay, not an installed-version equality check.
 #'   DRDID 1.3.0 is tested; other versions must satisfy these same checks.
@@ -47,7 +60,7 @@
 #'   unit-by-repetition matrix otherwise; `rep_seeds` records the DML seeds and
 #'   `dml.att` contains the auxiliary ATT for every repetition.
 #'
-#'   The parametric method preserves the external ATT and IF and computes new
+#'   The replicate method preserves the external ATT and IF and computes new
 #'   sensitivity moments with full-sample nuisance estimation effects in the
 #'   joint IF. It requires regular fixed-dimensional fits, overlap and finite
 #'   moments; the sensitivity interpretation additionally requires the relevant
@@ -58,23 +71,40 @@
 #'   `parametric` fit diagnostics and result-level `nuisance.correction` vectors.
 #'   Benchmarks retain the method and reject learner overrides. See
 #'   `inst/notes/parametric-inference.md` in the source package for the derivation.
+#'
+#'   With active source control trimming, replicate retains the source ATT/IF
+#'   and uses all units and untrimmed propensities for sensitivity moments.
+#'   Valid trimmed ATT inference requires a correct control conditional mean,
+#'   a fixed threshold, positive population retained-control weight and a regular
+#'   boundary (e.g. bounded propensity density near the threshold, without an atom
+#'   at it), in addition to the preceding conditions. The source IF includes the
+#'   nonvanishing outcome-model estimation effect; the boundary term vanishes
+#'   under the stated correct-mean conditions. Generic misspecification-robust
+#'   inference is not claimed with active trimming. See
+#'   `inst/notes/replicate-trimming.md` for sufficient conditions and the proof.
+#'   `adapter_info$diagnostics$source.trimming` records the threshold, trimmed
+#'   control indices/IDs and retained weight. Population assumptions cannot be
+#'   verified from these diagnostics. Benchmark refits recompute their own masks.
 #' @export
 dml_from_drdid <- function(fit, data = NULL, yname = NULL, tname = NULL,
                            idname = NULL, dname = NULL, xformla = NULL,
                            weightsname = NULL, y1 = NULL, y0 = NULL, D = NULL,
                            covariates = NULL, i.weights = NULL, unit_id = NULL,
-                           dml_args = list(), method = c("crossfit", "parametric")) {
-  method <- match.arg(method)
-  if (method == "parametric") .panel_parametric_args(dml_args)
+                           dml_args = list(), method = c("dml", "replicate")) {
+  method <- .panel_adapter_method(method)
+  if (method == "dml_refit")
+    .drdid_stop("method = 'dml_refit' is available through dml_from_did() and dml_from_did_cells(); use dml() for a direct fit of two-period data.")
+  if (method == "replicate") .panel_parametric_args(dml_args)
   version <- .drdid_require()
   spec <- .drdid_spec(fit)
-  if (method == "parametric" && spec$method != "trad")
-    .drdid_stop("method = 'parametric' currently requires estMethod = 'trad'.")
+  if (method == "replicate" && spec$method != "trad")
+    .drdid_stop("method = 'replicate' currently requires estMethod = 'trad'.")
   sample <- .drdid_panel_data(fit, spec, data, yname, tname, idname, dname,
                               xformla, weightsname, y1, y0, D, covariates,
                               i.weights, unit_id)
-  diagnostics <- .drdid_check_source(fit, sample, spec)
-  hybrid <- if (method == "parametric")
+  diagnostics <- .drdid_check_source(fit, sample, spec,
+                                      allow.trimming = method == "replicate")
+  hybrid <- if (method == "replicate")
     .panel_parametric_aux(sample, fit$ATT, spec$phi, spec, diagnostics) else
     .panel_hybrid_aux(sample, fit$ATT, spec$phi, dml_args)
   aux <- hybrid$fit
@@ -89,13 +119,14 @@ dml_from_drdid <- function(fit, data = NULL, yname = NULL, tname = NULL,
                            rep_seeds = hybrid$rep_seeds,
                            diagnostics = diagnostics, original.se = fit$se,
                            original.boot = fit$argu$boot)
-  if (method == "parametric") {
+  if (method == "replicate") {
     aux$adapter_info$mode <- "parametric"
     aux$adapter_info$inference <- aux$parametric$inference
   } else {
     aux$adapter_info$dml.att <- vapply(aux$auxiliary_dml_results$main$treat,
                                       function(r) r$estimates$theta.s, numeric(1))
   }
+  aux$adapter_info$method <- method
   aux$refit_spec <- list(source = list(method = spec$method, trim.level = spec$trim.level),
                          dml_args = args, method = method)
   aux$call <- match.call()
@@ -113,12 +144,13 @@ dml_from_drdid <- function(fit, data = NULL, yname = NULL, tname = NULL,
   reg
 }
 
-.drdid_dml_args <- function(args, n) {
+.drdid_dml_args <- function(args, n, target = "att") {
   if (!is.list(args) || (length(args) && (is.null(names(args)) ||
       anyNA(names(args)) || any(!nzchar(names(args))) || anyDuplicated(names(args)))))
     .drdid_stop("dml_args must be a uniquely named list.")
-  locked <- list(model = "npm", target = "att", conditional = TRUE, centered = FALSE,
-                 dirty.tuning = FALSE, y.class = FALSE)
+  target <- match.arg(target, c("att", "atu"))
+  locked <- list(model = "npm", target = target, conditional = TRUE, centered = FALSE,
+                 y.class = FALSE)
   for (key in intersect(names(args), names(locked))) {
     if (!isTRUE(all.equal(args[[key]], locked[[key]])))
       .drdid_stop("dml_args$", key, " is fixed by the panel adapter.")
@@ -126,8 +158,11 @@ dml_from_drdid <- function(fit, data = NULL, yname = NULL, tname = NULL,
   allowed <- setdiff(names(formals(dml)), c("y", "d", "x", "groups"))
   if (any(!names(args) %in% allowed)) .drdid_stop("Unsupported dml_args: ", paste(setdiff(names(args), allowed), collapse = ", "))
   out <- utils::modifyList(list(cf.folds = 5L, cf.reps = 1L, cf.seed = 1L, ps.trim = 0.01,
-                                verbose = FALSE), args, keep.null = TRUE)
+                                dirty.tuning = FALSE, verbose = FALSE), args, keep.null = TRUE)
   out <- utils::modifyList(out, locked)
+  if (!is.logical(out$dirty.tuning) || length(out$dirty.tuning) != 1L ||
+      is.na(out$dirty.tuning))
+    .drdid_stop("dml_args$dirty.tuning must be TRUE or FALSE.")
   k <- out$cf.folds; seed <- out$cf.seed
   if (!is.numeric(k) || length(k) != 1L || !is.finite(k) || k != floor(k) || k < 2 || k > n)
     .drdid_stop("cf.folds must be an integer between 2 and the number of units.")
@@ -180,10 +215,9 @@ dml_from_drdid <- function(fit, data = NULL, yname = NULL, tname = NULL,
 }
 
 .drdid_benchmark_refit <- function(model, x, dreg = NULL, yreg = NULL) {
-  method <- model$refit_spec$method
-  if (is.null(method)) method <- "crossfit"
-  if (method == "parametric" && (!is.null(dreg) || !is.null(yreg)))
-    .drdid_stop("Parametric benchmarks use the source logistic/OLS models; dreg/yreg overrides are not supported.")
+  method <- .panel_adapter_method(model$refit_spec$method)
+  if (method == "replicate" && (!is.null(dreg) || !is.null(yreg)))
+    .drdid_stop("Replicate benchmarks use the source logistic/OLS models; dreg/yreg overrides are not supported.")
   sample <- model$adapter_data
   if (!ncol(x)) .drdid_stop("A benchmark must retain at least one design column; retain the source intercept for an unconditional refit.")
   sample$X <- x
@@ -200,9 +234,13 @@ dml_from_drdid <- function(fit, data = NULL, yname = NULL, tname = NULL,
 }
 
 .panel_check_benchmark_alignment <- function(model, refit) {
-  if (!identical(model$adapter_info$unit_id, refit$adapter_info$unit_id) ||
+  slot <- unname(.target_to_slot[model$info$target])
+  if (length(slot) != 1L || is.na(slot) ||
+      !identical(model$info$target, refit$info$target) ||
+      !identical(model$adapter_info$unit_id, refit$adapter_info$unit_id) ||
       !identical(model$adapter_info$fold_id, refit$adapter_info$fold_id) ||
-      length(model$results$main$treat) != length(refit$results$main$treat))
+      !length(model$results$main[[slot]]) ||
+      length(model$results$main[[slot]]) != length(refit$results$main[[slot]]))
     .drdid_stop("Benchmark units or cross-fitting partitions differ from the saved fit. Restore the original RNG settings and refit specifications.")
   invisible(NULL)
 }
@@ -218,11 +256,13 @@ summary.dml_drdid <- function(object, combine.method = "median", ...) {
 #' @export
 print.summary_dml_drdid <- function(x, ...) {
   if (identical(x$adapter_info$mode, "parametric")) {
-    cat("Parametric panel DiD sensitivity fit\n")
+    cat("Replicate panel DiD sensitivity fit\n")
     cat("ATT: DRDID (trad); sensitivity moments: full-sample logistic/OLS\n")
     cat("No cross-fitting; nuisance estimation effects included\n")
+    .panel_print_source_trimming(x$adapter_info)
   } else {
     cat("Hybrid panel DiD sensitivity fit\n")
+    cat("Method: dml; tuning:", if (isTRUE(x$info$dirty.tuning)) "dirty" else "clean", "\n")
     cat("ATT: DRDID (", x$adapter_info$estMethod, "); sensitivity moments: cross-fitted DML\n", sep = "")
   }
   cat("Inference: analytic joint influence functions\n\n")
@@ -238,7 +278,26 @@ print.dml_drdid <- function(x, ...) {
 
 # Shared auxiliary fit: frontends supply an ordered panel ATT and its IF.
 .panel_hybrid_aux <- function(sample, theta, phi, dml_args) {
-  args <- .drdid_dml_args(dml_args, length(sample$D))
+  fitted <- .panel_dml_fit(sample, dml_args)
+  aux <- fitted$fit
+  aux$auxiliary_dml_results <- aux$results
+  results <- lapply(seq_along(aux$results$main$treat), function(i) {
+    tryCatch(.drdid_combine_moments(aux$results$main$treat[[i]], theta, phi,
+                                  sample$y1 - sample$y0, sample$D),
+      error = function(e) .drdid_stop("Repetition ", i, ": ", conditionMessage(e)))
+  })
+  aux$results$main <- list(treat = results)
+  aux$coefs$main <- list(treat = combine.cross.fits(results))
+  fitted$fit <- aux
+  fitted
+}
+
+# Fit one coherent native DML estimator; never replace its effect or any IF here.
+.panel_dml_fit <- function(sample, dml_args, target = "att") {
+  args <- .drdid_dml_args(dml_args, length(sample$D), target)
+  slot <- unname(.target_to_slot[args$target])
+  outcome.arm <- if (args$target == "atu") 1 else 0
+  arm.label <- if (outcome.arm == 1) "treated" else "control"
   # caret's range preprocessing has no scale to estimate on a constant design.
   # Preserve explicit preprocessing choices; omit the default in this case.
   if (all(apply(sample$X, 2L, function(v) length(unique(v)) == 1L))) {
@@ -252,7 +311,7 @@ print.dml_drdid <- function(x, ...) {
       args[[key]] <- .drdid_constant_design_learner(learner)
     }
   }
-  # Preflight all exact partitions before fitting, including control-arm scaling.
+  # Preflight all exact partitions, including scaling in the fitted outcome arm.
   # Use the same seed draw and fold assignment as dml()/cross.fitting().
   set.seed(args$cf.seed)
   rep.seeds <- sample.int(1e6, args$cf.reps)
@@ -264,19 +323,19 @@ print.dml_drdid <- function(x, ...) {
   for (i in seq_len(args$cf.reps)) {
     for (k in seq_len(args$cf.folds)) {
       train <- folds[, i] != k
-      control <- train & sample$D == 0
-      if (length(unique(sample$D[train])) != 2L || sum(control) < 2L ||
-          length(unique((sample$y1 - sample$y0)[control])) < 2L)
+      outcome.train <- train & sample$D == outcome.arm
+      if (length(unique(sample$D[train])) != 2L || sum(outcome.train) < 2L ||
+          length(unique((sample$y1 - sample$y0)[outcome.train])) < 2L)
         .drdid_stop("Repetition ", i, ", training fold ", k,
-          " lacks both groups or control-outcome variation; change cf.folds/cf.seed or provide more data.")
+          " lacks both groups or ", arm.label,
+          "-outcome variation; change cf.folds/cf.seed or provide more data.")
     }
   }
   aux <- do.call(dml, c(list(y = sample$y1 - sample$y0, d = sample$D, x = sample$X), args))
-  if (length(aux$fits) != args$cf.reps || length(aux$results$main$treat) != args$cf.reps)
+  if (length(aux$fits) != args$cf.reps || length(aux$results$main[[slot]]) != args$cf.reps)
     .drdid_stop("DML did not return every requested cross-fitting repetition.")
-  aux$auxiliary_dml_results <- aux$results
-  results <- lapply(seq_len(args$cf.reps), function(i) {
-    result <- aux$auxiliary_dml_results$main$treat[[i]]
+  for (i in seq_len(args$cf.reps)) {
+    result <- aux$results$main[[slot]][[i]]
     pscore <- aux$fits[[i]]$preds$dhat
     if (any(!is.finite(pscore)) || any(pscore <= 0 | pscore >= 1) ||
         result$trim.summary$trimmed_num$all > 0)
@@ -285,11 +344,7 @@ print.dml_drdid <- function(x, ...) {
     if (!is.finite(result$estimates$S2) || result$estimates$S2 <= 0)
       .drdid_stop("Repetition ", i,
         ": DML produced non-positive or non-finite S2; regular sensitivity inference is unavailable.")
-    tryCatch(.drdid_combine_moments(result, theta, phi, sample$y1 - sample$y0, sample$D),
-      error = function(e) .drdid_stop("Repetition ", i, ": ", conditionMessage(e)))
-  })
-  aux$results$main <- list(treat = results)
-  aux$coefs$main <- list(treat = combine.cross.fits(results))
+  }
   colnames(folds) <- paste0("rep", seq_len(args$cf.reps))
   # Keep the single-repetition metadata shape compatible with earlier releases.
   fold <- if (args$cf.reps == 1L) unname(folds[, 1L]) else folds
